@@ -139,6 +139,19 @@ begin
     begin
       HandleFileChanged(APath);
     end);
+  TDirectoryWatcher(FWatcher).Start;
+
+  // Eager-parse all files in background
+  TThread.CreateAnonymousThread(
+    procedure
+    begin
+      try
+        ParseAllFiles;
+      except
+        on E: Exception do
+          WriteLn(ErrOutput, '[delphi-ast] Background parse failed: ' + E.Message);
+      end;
+    end).Start;
 end;
 
 destructor TASTParser.Destroy;
