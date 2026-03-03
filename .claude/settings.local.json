@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__delphi-ast__find_usages",
+      "mcp__delphi-ast__get_source",
+      "mcp__delphi-ast__symbol_at_position",
+      "mcp__delphi-ast__get_syntax_tree"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "delphi-ast"
+  ]
+}
