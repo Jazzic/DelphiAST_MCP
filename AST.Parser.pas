@@ -116,7 +116,10 @@ end;
 
 function TASTParser.GetProjectRoot: string;
 begin
-  Result := FRoots[0];
+  if Length(FRoots) > 0 then
+    Result := FRoots[0]
+  else
+    Result := '';
 end;
 
 constructor TASTParser.Create(const AProjectRoot: string);
@@ -135,7 +138,7 @@ begin
   begin
     SetLength(FRoots, Length(ARoots));
     for I := 0 to High(ARoots) do
-      FRoots[I] := IncludeTrailingPathDelimiter(ARoots[I]);
+      FRoots[I] := IncludeTrailingPathDelimiter(ExpandFileName(ARoots[I]));
     FIncludeHandler := TSimpleIncludeHandler.Create(FRoots);
     InitCacheDir;
 
@@ -361,7 +364,7 @@ begin
   // 3. Set new roots
   SetLength(FRoots, Length(ARoots));
   for I := 0 to High(ARoots) do
-    FRoots[I] := IncludeTrailingPathDelimiter(ARoots[I]);
+    FRoots[I] := IncludeTrailingPathDelimiter(ExpandFileName(ARoots[I]));
 
   // 4. Reinitialize
   FIncludeHandler := TSimpleIncludeHandler.Create(FRoots);
@@ -442,6 +445,9 @@ var
   I: Integer;
   FullPath: string;
 begin
+  if Length(FRoots) = 0 then
+    raise Exception.Create('No project configured. Call set_project first.');
+
   if not TPath.IsRelativePath(AFileName) then
     Exit(AFileName);
 

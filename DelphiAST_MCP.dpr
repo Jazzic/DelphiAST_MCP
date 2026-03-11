@@ -6,6 +6,7 @@ program DelphiAST_MCP;
 uses
   SysUtils,
   Classes,
+  IOUtils,
   AST.Parser in 'AST.Parser.pas',
   AST.Serialize in 'AST.Serialize.pas',
   AST.Watcher in 'AST.Watcher.pas',
@@ -62,12 +63,13 @@ begin
     end;
 
     // Build roots array: project root first, then extra paths
+    // Normalize paths to resolve any .. or . components
     if ProjectRoot <> '' then
     begin
       SetLength(Roots, 1 + PathCount);
-      Roots[0] := ProjectRoot;
+      Roots[0] := ExpandFileName(ProjectRoot);
       for I := 0 to PathCount - 1 do
-        Roots[I + 1] := ExtraPaths[I];
+        Roots[I + 1] := ExpandFileName(ExtraPaths[I]);
     end
     else
       SetLength(Roots, 0);

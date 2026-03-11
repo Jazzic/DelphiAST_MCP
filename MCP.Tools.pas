@@ -272,12 +272,23 @@ var
   Arr: TJSONArray;
   F: string;
 begin
-  Filter := GetStr(Params, 'filter');
-  Files := FParser.ListFiles(Filter);
-  Arr := TJSONArray.Create;
-  for F in Files do
-    Arr.Add(F);
-  Result := Arr;
+  try
+    if not FParser.IsConfigured then
+      raise Exception.Create('No project configured. Call set_project first.');
+
+    Filter := GetStr(Params, 'filter');
+    Files := FParser.ListFiles(Filter);
+    Arr := TJSONArray.Create;
+    for F in Files do
+      Arr.Add(F);
+    Result := Arr;
+  except
+    on E: Exception do
+    begin
+      Result := TJSONObject.Create;
+      TJSONObject(Result).AddPair('error', E.Message);
+    end;
+  end;
 end;
 
 function TMCPTools.DoParseUnit(Params: TJSONObject): TJSONValue;
@@ -1129,6 +1140,9 @@ begin
   if not DirectoryExists(ProjectPath) then
     raise Exception.Create('Directory not found: ' + ProjectPath);
 
+  // Normalize the project path to resolve any .. or . components
+  ProjectPath := ExpandFileName(ProjectPath);
+
   // Start with project root
   SetLength(Roots, 1);
   Roots[0] := ProjectPath;
@@ -1148,7 +1162,8 @@ begin
         for I := 0 to LibPathsArr.Count - 1 do
         begin
           SetLength(Roots, Length(Roots) + 1);
-          Roots[High(Roots)] := LibPathsArr.Items[I].Value;
+          // Normalize library paths as well
+          Roots[High(Roots)] := ExpandFileName(LibPathsArr.Items[I].Value);
         end;
       end;
     finally
