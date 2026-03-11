@@ -29,7 +29,8 @@ uses
   Tests.ParseUnit in 'Tests.ParseUnit.pas',
   Tests.ResolveInheritance in 'Tests.ResolveInheritance.pas',
   Tests.SetProject in 'Tests.SetProject.pas',
-  Tests.SymbolAtPosition in 'Tests.SymbolAtPosition.pas';
+  Tests.SymbolAtPosition in 'Tests.SymbolAtPosition.pas',
+  Tests.DelphiASTInvestigation in 'Tests.DelphiASTInvestigation.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}

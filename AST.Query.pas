@@ -705,6 +705,37 @@ begin
   if TypeNode <> nil then
   begin
     TypeKind := NodeName(TypeNode);
+    // If type kind is empty, infer from node structure
+    // DelphiAST stores interface/class as empty name in ntType node
+    if TypeKind = '' then
+    begin
+      // Check for GUID child → it's an interface (only if has children)
+      if TypeNode.HasChildren then
+      begin
+        for Child in TypeNode.ChildNodes do
+        begin
+          if Child.Typ = ntGuid then
+          begin
+            TypeKind := 'interface';
+            Break;
+          end;
+        end;
+        // If no GUID, check for visibility sections → it's a class
+        if TypeKind = '' then
+        begin
+          for Child in TypeNode.ChildNodes do
+            if Child.Typ in [ntPublic, ntPrivate, ntProtected, ntPublished,
+              ntStrictPrivate, ntStrictProtected] then
+            begin
+              TypeKind := 'class';
+              Break;
+            end;
+        end;
+      end;
+      // Default to class if still empty
+      if TypeKind = '' then
+        TypeKind := 'class';
+    end;
     if TypeKind <> '' then
       Result.AddPair('kind', TypeKind);
 
