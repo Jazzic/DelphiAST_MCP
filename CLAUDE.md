@@ -4,11 +4,21 @@
 
 Use the batch files in the project root:
 
+Build MCP server:
 ```bash
-build.bat    # Build main server (outputs to bin64/DelphiAST_MCP.exe)
-build-tests.bat
-run-tests.bat
+c:\Users\jespe\Documents\Embarcadero\Studio\Projects\DelphiAST_MCP\build.bat 
 ```
+
+Build test suite:
+```bash
+c:\Users\jespe\Documents\Embarcadero\Studio\Projects\DelphiAST_MCP\build-tests.bat 
+```
+
+Run the tests:
+```bash
+c:\Users\jespe\Documents\Embarcadero\Studio\Projects\DelphiAST_MCP\run-tests.bat 
+```
+
 
 ## Architecture
 
