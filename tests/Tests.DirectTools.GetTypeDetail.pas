@@ -26,6 +26,7 @@ type
     [Test] procedure TRectangle_IsClass;
     [Test] procedure TCat_IsClass;
     [Test] procedure TShape_IsClass;
+    [Test] procedure IAnimal_IsInterface;
     [Test] procedure NoFile_SearchesAllParsed;
     [Test] procedure NonExistent_ReturnsError;
     [Test] procedure NonExistent_NoFile_RaisesException;
@@ -223,6 +224,41 @@ begin
 
       Assert.IsNull(Obj.Get('error'), 'Should not have error: ' + Obj.ToString);
       Assert.AreEqual('TShape', Obj.GetValue<string>('name'), 'Type name should be TShape');
+    finally
+      Result.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+end;
+
+procedure TDirectToolsGetTypeDetailTests.IAnimal_IsInterface;
+var
+  Params: TJSONObject;
+  Result: TJSONValue;
+  Obj: TJSONObject;
+  Methods: TJSONArray;
+begin
+  Params := TJSONObject.Create;
+  Params.AddPair('type_name', 'IAnimal');
+  Params.AddPair('file', 'Animals.pas');
+  try
+    Result := FTools.DoGetTypeDetail(Params);
+    try
+      Assert.IsNotNull(Result, 'Result should not be null');
+      Assert.IsTrue(Result is TJSONObject, 'Result should be TJSONObject');
+      Obj := TJSONObject(Result);
+
+      Assert.IsNull(Obj.Get('error'), 'Should not have error: ' + Obj.ToString);
+      Assert.AreEqual('IAnimal', Obj.GetValue<string>('name'), 'Type name should be IAnimal');
+      Assert.AreEqual('interface', Obj.GetValue<string>('kind', ''), 'Kind should be interface');
+
+      // Should have methods array with GetName and Speak
+      Assert.IsNotNull(Obj.FindValue('methods'), 'Should have methods: ' + Obj.ToString);
+      Methods := Obj.GetValue<TJSONArray>('methods');
+      Assert.AreEqual(2, Methods.Count, 'Should have 2 methods');
+      Assert.IsTrue(Obj.ToString.Contains('GetName'), 'Should contain GetName method');
+      Assert.IsTrue(Obj.ToString.Contains('Speak'), 'Should contain Speak method');
     finally
       Result.Free;
     end;

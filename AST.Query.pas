@@ -704,24 +704,15 @@ begin
   TypeNode := TypeDecl.FindNode(ntType);
   if TypeNode <> nil then
   begin
-    TypeKind := NodeName(TypeNode);
-    // If type kind is empty, infer from node structure
-    // DelphiAST stores interface/class as empty name in ntType node
+    // First check the anType attribute (set by DelphiAST for class/interface/etc)
+    TypeKind := TypeNode.GetAttribute(anType);
     if TypeKind = '' then
     begin
-      // Check for GUID child → it's an interface (only if has children)
-      if TypeNode.HasChildren then
+      TypeKind := NodeName(TypeNode);
+      // If still empty, infer from node structure
+      if TypeKind = '' then
       begin
-        for Child in TypeNode.ChildNodes do
-        begin
-          if Child.Typ = ntGuid then
-          begin
-            TypeKind := 'interface';
-            Break;
-          end;
-        end;
-        // If no GUID, check for visibility sections → it's a class
-        if TypeKind = '' then
+        if TypeNode.HasChildren then
         begin
           for Child in TypeNode.ChildNodes do
             if Child.Typ in [ntPublic, ntPrivate, ntProtected, ntPublished,
@@ -731,10 +722,9 @@ begin
               Break;
             end;
         end;
+        if TypeKind = '' then
+          TypeKind := 'class';
       end;
-      // Default to class if still empty
-      if TypeKind = '' then
-        TypeKind := 'class';
     end;
     if TypeKind <> '' then
       Result.AddPair('kind', TypeKind);
@@ -768,8 +758,20 @@ begin
     else
       FreeAndNil(Sections);
 
+    // For interfaces, extract methods directly from TypeNode children
+    if SameText(TypeKind, 'interface') then
+    begin
+      var IntfMethods := TJSONArray.Create;
+      for Child in TypeNode.ChildNodes do
+        if Child.Typ = ntMethod then
+          IntfMethods.Add(ExtractMethodInfo(Child));
+      if IntfMethods.Count > 0 then
+        Result.AddPair('methods', IntfMethods)
+      else
+        IntfMethods.Free;
+    end
     // For records/enums without visibility sections, extract directly
-    if (Sections = nil) or (Sections.Count = 0) then
+    else if (Sections = nil) or (Sections.Count = 0) then
     begin
       // Check for enum values
       if TypeKind = 'enum' then

@@ -65,6 +65,8 @@ begin
       Assert.IsTrue(Result is TJSONObject, 'Result should be a TJSONObject but was: ' + Result.ClassName);
       Obj := TJSONObject(Result);
       Assert.AreEqual('interface', Obj.GetValue<string>('kind', ''), 'Kind should be interface');
+      TMCPTestHelper.AssertStringContains(Obj.ToString, 'animals.pas');
+      // Should have methods with GetName and Speak
       TMCPTestHelper.AssertStringContains(Obj.ToString, 'GetName');
       TMCPTestHelper.AssertStringContains(Obj.ToString, 'Speak');
     finally
