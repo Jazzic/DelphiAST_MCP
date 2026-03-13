@@ -32,7 +32,6 @@ uses
   Tests.Status in 'Tests.Status.pas',
   Tests.SymbolAtPosition in 'Tests.SymbolAtPosition.pas',
   Tests.DelphiASTInvestigation in 'Tests.DelphiASTInvestigation.pas',
-  // Direct tool tests (no server)
   Tests.DirectTools.ListFiles in 'Tests.DirectTools.ListFiles.pas',
   Tests.DirectTools.ParseUnit in 'Tests.DirectTools.ParseUnit.pas',
   Tests.DirectTools.GetTypeDetail in 'Tests.DirectTools.GetTypeDetail.pas',
@@ -45,7 +44,12 @@ uses
   Tests.DirectTools.SymbolAtPosition in 'Tests.DirectTools.SymbolAtPosition.pas',
   Tests.DirectTools.ResolveInheritance in 'Tests.DirectTools.ResolveInheritance.pas',
   Tests.DirectTools.GetCallGraph in 'Tests.DirectTools.GetCallGraph.pas',
-  Tests.DirectTools.GetStatus in 'Tests.DirectTools.GetStatus.pas';
+  Tests.DirectTools.GetStatus in 'Tests.DirectTools.GetStatus.pas',
+  AST.Parser in '..\AST.Parser.pas',
+  MCP.Tools in '..\MCP.Tools.pas',
+  AST.Watcher in '..\AST.Watcher.pas',
+  AST.Serialize in '..\AST.Serialize.pas',
+  AST.Query in '..\AST.Query.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}
