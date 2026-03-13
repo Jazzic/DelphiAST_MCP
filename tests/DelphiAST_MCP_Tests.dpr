@@ -31,7 +31,21 @@ uses
   Tests.SetProject in 'Tests.SetProject.pas',
   Tests.Status in 'Tests.Status.pas',
   Tests.SymbolAtPosition in 'Tests.SymbolAtPosition.pas',
-  Tests.DelphiASTInvestigation in 'Tests.DelphiASTInvestigation.pas';
+  Tests.DelphiASTInvestigation in 'Tests.DelphiASTInvestigation.pas',
+  // Direct tool tests (no server)
+  Tests.DirectTools.ListFiles in 'Tests.DirectTools.ListFiles.pas',
+  Tests.DirectTools.ParseUnit in 'Tests.DirectTools.ParseUnit.pas',
+  Tests.DirectTools.GetTypeDetail in 'Tests.DirectTools.GetTypeDetail.pas',
+  Tests.DirectTools.GetMethodBody in 'Tests.DirectTools.GetMethodBody.pas',
+  Tests.DirectTools.FindReferences in 'Tests.DirectTools.FindReferences.pas',
+  Tests.DirectTools.GetUsesGraph in 'Tests.DirectTools.GetUsesGraph.pas',
+  Tests.DirectTools.GetSyntaxTree in 'Tests.DirectTools.GetSyntaxTree.pas',
+  Tests.DirectTools.FindUsages in 'Tests.DirectTools.FindUsages.pas',
+  Tests.DirectTools.GetSource in 'Tests.DirectTools.GetSource.pas',
+  Tests.DirectTools.SymbolAtPosition in 'Tests.DirectTools.SymbolAtPosition.pas',
+  Tests.DirectTools.ResolveInheritance in 'Tests.DirectTools.ResolveInheritance.pas',
+  Tests.DirectTools.GetCallGraph in 'Tests.DirectTools.GetCallGraph.pas',
+  Tests.DirectTools.GetStatus in 'Tests.DirectTools.GetStatus.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}

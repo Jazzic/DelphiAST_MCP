@@ -9,10 +9,14 @@ set DELPHIAST2_SRC=C:\Users\Public\DelphiLibs\DelphiAST\Source\SimpleParser
 
 echo Building DelphiAST_MCP Tests...
 
+set PROJECT_ROOT=%~dp0
+set PROJECT_ROOT=%PROJECT_ROOT:~0,-1%
+
 "%DCC%" -B ^
   -I"%DUNITX_SRC%" ^
   -U"%DELPHIAST_SRC%" ^
   -U"%DELPHIAST2_SRC%" ^
+  -U"%PROJECT_ROOT%" ^
   -NS"System;System.Win;Winapi;DUnitX" ^
   -NUdcu64 -Ebin64 tests\DelphiAST_MCP_Tests.dpr
 
