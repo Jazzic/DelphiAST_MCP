@@ -93,20 +93,26 @@ begin
     Args.Free;
   end;
 
-  // Wait for parsing to complete (server to reach idle state)
-  var StatusResult: TJSONValue;
+  // Wait for parsing to complete
+  var ReadyResult: TJSONValue;
   var StartTick := GetTickCount;
+  var Ready := false;
   repeat
-    StatusResult := TMCPTestHelper.CallTool('get_status');
+    ReadyResult := TMCPTestHelper.CallTool('is_ready');
     try
-      if (StatusResult is TJSONObject) and
-         (TJSONObject(StatusResult).GetValue<string>('state', '') = 'idle') then
+      Assert.IsTrue((ReadyResult is TJSONObject), 'ReadyResult is not TJSONObject');
+      if TJSONObject(ReadyResult).GetValue<Boolean>('ready', False) then
+      begin
+        Ready:= true;
         Break;
+      end;
     finally
-      StatusResult.Free;
+      FreeAndNil(ReadyResult);
     end;
     Sleep(200);
   until GetTickCount - StartTick > 15000;
+
+  Assert.IsTrue(Ready, 'Did not become ready within 15000ms' );
 
   // Now list_files should work
   Result := TMCPTestHelper.CallTool('list_files');

@@ -29,6 +29,7 @@ type
     function DoGetCallGraph(Params: TJSONObject): TJSONValue;
     function DoSetProject(Params: TJSONObject): TJSONValue;
     function DoGetStatus(Params: TJSONObject): TJSONValue;
+    function DoIsReady(Params: TJSONObject): TJSONValue;
 
     property Parser: TASTParser read FParser;
   end;
@@ -215,12 +216,19 @@ begin
     'State is "idle" when ready, "parsing" while background parse is running. ' +
     'Includes total_files, cached_files, parsed_files, and failed_files counts.',
     MakeInputSchema(Props, [])));
+
+  // 15. is_ready
+  Props := TJSONObject.Create;
+  Result.Add(MakeTool('is_ready',
+    'Returns {"ready": true} when the server has finished parsing and is ready to serve requests, ' +
+    '"{"ready": false} otherwise. Use this after set_project to wait for parsing to complete.',
+    MakeInputSchema(Props, [])));
 end;
 
 function TMCPTools.CallTool(const ToolName: string; Params: TJSONObject): TJSONValue;
 begin
   // Allow status/project tools through always; guard others against bad state
-  if (ToolName <> 'get_status') and (ToolName <> 'set_project') then
+  if (ToolName <> 'get_status') and (ToolName <> 'set_project') and (ToolName <> 'is_ready') then
   begin
     if not FParser.IsConfigured then
     begin
@@ -242,6 +250,8 @@ begin
   try
     if ToolName = 'get_status' then
       Result := DoGetStatus(Params)
+    else if ToolName = 'is_ready' then
+      Result := DoIsReady(Params)
     else if ToolName = 'list_files' then
       Result := DoListFiles(Params)
     else if ToolName = 'parse_unit' then
@@ -1286,6 +1296,15 @@ begin
   Obj.AddPair('cached_files', TJSONNumber.Create(Status.CachedFiles));
   Obj.AddPair('parsed_files', TJSONNumber.Create(Status.ParsedFiles));
   Obj.AddPair('failed_files', TJSONNumber.Create(Status.FailedFiles));
+  Result := Obj;
+end;
+
+function TMCPTools.DoIsReady(Params: TJSONObject): TJSONValue;
+var
+  Obj: TJSONObject;
+begin
+  Obj := TJSONObject.Create;
+  Obj.AddPair('ready', TJSONBool.Create(FParser.IsReady));
   Result := Obj;
 end;
 
