@@ -239,36 +239,47 @@ begin
     end;
   end;
 
-  if ToolName = 'get_status' then
-    Result := DoGetStatus(Params)
-  else if ToolName = 'list_files' then
-    Result := DoListFiles(Params)
-  else if ToolName = 'parse_unit' then
-    Result := DoParseUnit(Params)
-  else if ToolName = 'get_type_detail' then
-    Result := DoGetTypeDetail(Params)
-  else if ToolName = 'get_method_body' then
-    Result := DoGetMethodBody(Params)
-  else if ToolName = 'find_references' then
-    Result := DoFindReferences(Params)
-  else if ToolName = 'get_uses_graph' then
-    Result := DoGetUsesGraph(Params)
-  else if ToolName = 'get_syntax_tree' then
-    Result := DoGetSyntaxTree(Params)
-  else if ToolName = 'find_usages' then
-    Result := DoFindUsages(Params)
-  else if ToolName = 'get_source' then
-    Result := DoGetSource(Params)
-  else if ToolName = 'symbol_at_position' then
-    Result := DoSymbolAtPosition(Params)
-  else if ToolName = 'resolve_inheritance' then
-    Result := DoResolveInheritance(Params)
-  else if ToolName = 'get_call_graph' then
-    Result := DoGetCallGraph(Params)
-  else if ToolName = 'set_project' then
-    Result := DoSetProject(Params)
-  else
-    raise Exception.CreateFmt('Unknown tool: %s', [ToolName]);
+  try
+    if ToolName = 'get_status' then
+      Result := DoGetStatus(Params)
+    else if ToolName = 'list_files' then
+      Result := DoListFiles(Params)
+    else if ToolName = 'parse_unit' then
+      Result := DoParseUnit(Params)
+    else if ToolName = 'get_type_detail' then
+      Result := DoGetTypeDetail(Params)
+    else if ToolName = 'get_method_body' then
+      Result := DoGetMethodBody(Params)
+    else if ToolName = 'find_references' then
+      Result := DoFindReferences(Params)
+    else if ToolName = 'get_uses_graph' then
+      Result := DoGetUsesGraph(Params)
+    else if ToolName = 'get_syntax_tree' then
+      Result := DoGetSyntaxTree(Params)
+    else if ToolName = 'find_usages' then
+      Result := DoFindUsages(Params)
+    else if ToolName = 'get_source' then
+      Result := DoGetSource(Params)
+    else if ToolName = 'symbol_at_position' then
+      Result := DoSymbolAtPosition(Params)
+    else if ToolName = 'resolve_inheritance' then
+      Result := DoResolveInheritance(Params)
+    else if ToolName = 'get_call_graph' then
+      Result := DoGetCallGraph(Params)
+    else if ToolName = 'set_project' then
+      Result := DoSetProject(Params)
+    else
+    begin
+      Result := TJSONObject.Create;
+      TJSONObject(Result).AddPair('error', 'Unknown tool: ' + ToolName);
+    end;
+  except
+    on E: Exception do
+    begin
+      Result := TJSONObject.Create;
+      TJSONObject(Result).AddPair('error', E.Message);
+    end;
+  end;
 end;
 
 function GetStr(Params: TJSONObject; const Key: string; const Default: string = ''): string;
@@ -404,7 +415,8 @@ begin
       end;
       Detail.Free;
     end;
-    raise Exception.Create('Type "' + TypeName + '" not found');
+    Result := TJSONObject.Create;
+    TJSONObject(Result).AddPair('error', 'Type "' + TypeName + '" not found');
   end;
 end;
 
@@ -698,7 +710,11 @@ begin
       Tree := FParser.ParseFile(FileName);
       Loc := LocateSymbol(Tree, SymbolName);
       if not Loc.Found then
-        raise Exception.CreateFmt('Symbol "%s" not found in %s', [SymbolName, FileName]);
+      begin
+        Result := TJSONObject.Create;
+        TJSONObject(Result).AddPair('error', Format('Symbol "%s" not found in %s', [SymbolName, FileName]));
+        Exit;
+      end;
       FullPath := FParser.ResolveFilePath(FileName);
     end
     else
@@ -721,7 +737,11 @@ begin
         end;
       end;
       if not Loc.Found then
-        raise Exception.CreateFmt('Symbol "%s" not found in any parsed file', [SymbolName]);
+      begin
+        Result := TJSONObject.Create;
+        TJSONObject(Result).AddPair('error', Format('Symbol "%s" not found in any parsed file', [SymbolName]));
+        Exit;
+      end;
     end;
 
     StartLine := Loc.StartLine;
@@ -731,9 +751,17 @@ begin
   begin
     // Mode 2: by explicit line range
     if FileName = '' then
-      raise Exception.Create('Either "symbol" or "file" with "start_line"/"end_line" is required');
+    begin
+      Result := TJSONObject.Create;
+      TJSONObject(Result).AddPair('error', 'Either "symbol" or "file" with "start_line"/"end_line" is required');
+      Exit;
+    end;
     if (StartLine <= 0) or (EndLine <= 0) then
-      raise Exception.Create('Both "start_line" and "end_line" are required in line-range mode');
+    begin
+      Result := TJSONObject.Create;
+      TJSONObject(Result).AddPair('error', 'Both "start_line" and "end_line" are required in line-range mode');
+      Exit;
+    end;
     FullPath := FParser.ResolveFilePath(FileName);
   end;
 
@@ -883,8 +911,10 @@ begin
     if Chain.Count = 0 then
     begin
       Chain.Free;
-      Visited.Free;
-      raise Exception.CreateFmt('Type "%s" not found in any parsed file', [TypeName]);
+      ResultObj := TJSONObject.Create;
+      ResultObj.AddPair('error', Format('Type "%s" not found in any parsed file', [TypeName]));
+      Result := ResultObj;
+      Exit;  // finally block will free Visited — no double-free
     end;
 
     // Check if the queried type itself was not found (first item is an unresolved stub)
@@ -1111,9 +1141,9 @@ begin
         ResultObj.AddPair('file', FoundFile)
       else
       begin
-        ResultObj.Free;
-        Visited.Free;
-        raise Exception.CreateFmt('Method "%s" not found in any parsed file', [MethodName]);
+        ResultObj.AddPair('error', Format('Method "%s" not found in any parsed file', [MethodName]));
+        Result := ResultObj;
+        Exit;  // finally block will free Visited — no double-free
       end;
 
       var CallsArr := TJSONArray.Create;
@@ -1180,9 +1210,17 @@ var
 begin
   ProjectPath := GetStr(Params, 'path');
   if ProjectPath = '' then
-    raise Exception.Create('path is required');
+  begin
+    Result := TJSONObject.Create;
+    TJSONObject(Result).AddPair('error', 'path is required');
+    Exit;
+  end;
   if not DirectoryExists(ProjectPath) then
-    raise Exception.Create('Directory not found: ' + ProjectPath);
+  begin
+    Result := TJSONObject.Create;
+    TJSONObject(Result).AddPair('error', 'Directory not found: ' + ProjectPath);
+    Exit;
+  end;
 
   // Normalize the project path to resolve any .. or . components
   ProjectPath := ExpandFileName(ProjectPath);

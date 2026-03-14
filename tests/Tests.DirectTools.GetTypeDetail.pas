@@ -29,7 +29,7 @@ type
     [Test] procedure IAnimal_IsInterface;
     [Test] procedure NoFile_SearchesAllParsed;
     [Test] procedure NonExistent_ReturnsError;
-    [Test] procedure NonExistent_NoFile_RaisesException;
+    [Test] procedure NonExistent_NoFile_ReturnsError;
   end;
 
 implementation
@@ -319,26 +319,28 @@ begin
   end;
 end;
 
-procedure TDirectToolsGetTypeDetailTests.NonExistent_NoFile_RaisesException;
+procedure TDirectToolsGetTypeDetailTests.NonExistent_NoFile_ReturnsError;
 var
   Params: TJSONObject;
-  Raised: Boolean;
+  Result: TJSONValue;
+  Obj: TJSONObject;
 begin
   Params := TJSONObject.Create;
   Params.AddPair('type_name', 'TFoo');
-  // No file - should search all and raise if not found
-  Raised := False;
+  // No file specified - should search all parsed files and return error
   try
-    FTools.DoGetTypeDetail(Params);
-  except
-    on E: Exception do
-    begin
-      Raised := True;
-      Assert.Contains<string>(E.Message, 'not found', 'Exception should mention not found');
+    Result := FTools.DoGetTypeDetail(Params);
+    try
+      Assert.IsNotNull(Result, 'Result should not be null');
+      Assert.IsTrue(Result is TJSONObject, 'Result should be TJSONObject');
+      Obj := TJSONObject(Result);
+      Assert.IsNotNull(Obj.Get('error'), 'Should have error field');
+    finally
+      Result.Free;
     end;
+  finally
+    Params.Free;
   end;
-  Assert.IsTrue(Raised, 'Should raise exception for non-existent type when no file specified');
-  Params.Free;
 end;
 
 initialization

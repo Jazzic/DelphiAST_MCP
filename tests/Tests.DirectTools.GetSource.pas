@@ -22,6 +22,8 @@ type
     // get_source tests
     [Test] procedure ByLineRange_DogHeader;
     [Test] procedure ByLineRange_CatBody;
+    [Test] procedure SymbolNotFound_ReturnsError;
+    [Test] procedure MissingParams_ReturnsError;
   end;
 
 implementation
@@ -99,6 +101,53 @@ begin
 
       Assert.IsNull(Obj.Get('error'), 'Should not have error: ' + Obj.ToString);
       Assert.IsNotNull(Obj.Get('source'), 'Should have source');
+    finally
+      Result.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+end;
+
+procedure TDirectToolsGetSourceTests.SymbolNotFound_ReturnsError;
+var
+  Params: TJSONObject;
+  Result: TJSONValue;
+  Obj: TJSONObject;
+begin
+  Params := TJSONObject.Create;
+  Params.AddPair('symbol', 'TNoSuch.Foo');
+  Params.AddPair('file', 'Dog.pas');
+  try
+    Result := FTools.DoGetSource(Params);
+    try
+      Assert.IsNotNull(Result, 'Result should not be null');
+      Assert.IsTrue(Result is TJSONObject, 'Result should be TJSONObject');
+      Obj := TJSONObject(Result);
+      Assert.IsNotNull(Obj.Get('error'), 'Should have error field');
+    finally
+      Result.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+end;
+
+procedure TDirectToolsGetSourceTests.MissingParams_ReturnsError;
+var
+  Params: TJSONObject;
+  Result: TJSONValue;
+  Obj: TJSONObject;
+begin
+  Params := TJSONObject.Create;
+  // No symbol, no file, no lines - should return error
+  try
+    Result := FTools.DoGetSource(Params);
+    try
+      Assert.IsNotNull(Result, 'Result should not be null');
+      Assert.IsTrue(Result is TJSONObject, 'Result should be TJSONObject');
+      Obj := TJSONObject(Result);
+      Assert.IsNotNull(Obj.Get('error'), 'Should have error field');
     finally
       Result.Free;
     end;
