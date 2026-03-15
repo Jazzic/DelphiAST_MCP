@@ -114,7 +114,7 @@ begin
 
   Assert.IsTrue(Ready, 'Did not become ready within 15000ms' );
 
-  // Now list_files should work
+  // Now list_files should work - it returns files from ALL roots (project + library paths)
   Result := TMCPTestHelper.CallTool('list_files');
   try
     // If result is an error object, fail with specific message
@@ -126,9 +126,30 @@ begin
     end;
 
     Assert.IsNotNull(Result, 'Result is nil');
+    Assert.IsTrue(Result is TJSONArray, 'Arr is not TJSONArray');
     Arr := Result as TJSONArray;
-    Assert.IsNotNull(Arr, 'Result is not an array');
-    Assert.AreEqual(5, Arr.Count, 'Should have 5 files');
+    // When using set_project with .delphi-ast.json libraryPaths, list_files returns
+    // files from ALL roots (test-project + test-lib), not just the project
+    Assert.IsTrue(Arr.Count >= 7, 'Should have at least 7 files (5 project + 2 lib)');
+
+    // Verify the test-project files are included
+    Assert.IsTrue(Arr.Count >= 5, 'Should have at least 5 files');
+    // Check that at least the test-project files are present
+    var FoundAnimals := False;
+    var FoundDog := False;
+    var FoundTestLibTypes := False;
+    var FoundTestLibUtils := False;
+    for var I := 0 to Arr.Count - 1 do
+    begin
+      if Arr.Items[I].Value = 'Animals.pas' then FoundAnimals := True;
+      if Arr.Items[I].Value = 'Dog.pas' then FoundDog := True;
+      if Arr.Items[I].Value = 'TestLib.Types.pas' then FoundTestLibTypes := True;
+      if Arr.Items[I].Value = 'TestLib.Utils.pas' then FoundTestLibUtils := True;
+    end;
+    Assert.IsTrue(FoundAnimals, 'Should contain Animals.pas');
+    Assert.IsTrue(FoundDog, 'Should contain Dog.pas');
+    Assert.IsTrue(FoundTestLibTypes, 'Should contain TestLib.Types.pas');
+    Assert.IsTrue(FoundTestLibUtils, 'Should contain TestLib.Utils.pas');
   finally
     Result.Free;
   end;

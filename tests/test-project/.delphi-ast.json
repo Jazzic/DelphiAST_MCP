@@ -1,5 +1,5 @@
 {
   "libraryPaths": [
-    "c:/Users/Public/DelphiLibs/DelphiAST"
+    "../test-lib"
   ]
 }

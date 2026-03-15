@@ -1254,8 +1254,11 @@ begin
         for I := 0 to LibPathsArr.Count - 1 do
         begin
           SetLength(Roots, Length(Roots) + 1);
-          // Normalize library paths as well
-          Roots[High(Roots)] := ExpandFileName(LibPathsArr.Items[I].Value);
+          // Support both absolute paths and paths relative to the project
+          var LibPath := LibPathsArr.Items[I].Value;
+          if TPath.IsRelativePath(LibPath) then
+            LibPath := TPath.Combine(ProjectPath, LibPath);
+          Roots[High(Roots)] := ExpandFileName(LibPath);
         end;
       end;
     finally
