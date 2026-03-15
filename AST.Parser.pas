@@ -49,6 +49,12 @@ type
     FFailedFiles: Integer;
     FProjectFiles: TList<string>;
     FRewalking: Integer;
+    FProjectFilesLock: TLightweightMREW;
+    FParseThread: TThread;
+    FParseThreadLock: TCriticalSection;
+    FCancelled: Integer;
+
+    procedure WaitForParseThread;
 
     function GetProjectRoot: string;
     function ResolveUnitFile(const UnitName: string): string;
@@ -153,11 +159,14 @@ end;
 constructor TASTParser.Create(const ARoots: TArray<string>);
 var
   I: Integer;
+  Thread: TThread;
 begin
   inherited Create;
   FCache := TDictionary<string, TCachedTree>.Create;
   FProjectFiles := TList<string>.Create;
   FRewalking := 0;
+  FParseThreadLock := TCriticalSection.Create;
+  FCancelled := 0;
 
   if Length(ARoots) > 0 then
   begin
@@ -175,8 +184,8 @@ begin
       end);
     TDirectoryWatcher(FWatcher).Start;
 
-    // Eager-parse project files (dependency-driven) in background
-    TThread.CreateAnonymousThread(
+    // Eager-parse project files (dependency-driven) in background - tracked thread
+    Thread := TThread.CreateAnonymousThread(
       procedure
       begin
         try
@@ -185,7 +194,15 @@ begin
           on E: Exception do
             WriteLn(ErrOutput, '[delphi-ast] Background parse failed: ' + E.Message);
         end;
-      end).Start;
+      end);
+    Thread.FreeOnTerminate := False;
+    FParseThreadLock.Enter;
+    try
+      FParseThread := Thread;
+    finally
+      FParseThreadLock.Leave;
+    end;
+    Thread.Start;
   end;
 end;
 
@@ -200,6 +217,9 @@ begin
     FWatcher.Free;
   end;
 
+  // Wait for any background parse thread to complete
+  WaitForParseThread;
+
   FIncludeHandler := nil;
   FLock.BeginWrite;
   try
@@ -210,6 +230,8 @@ begin
   finally
     FLock.EndWrite;
   end;
+
+  FParseThreadLock.Free;
   inherited;
 end;
 
@@ -337,11 +359,14 @@ begin
       try
         if not FCache.ContainsKey(Key) then
         begin
+          WriteLn(Output, '[delphi-ast] Adding '+key+' to cache');
           FCache.Add(Key, Entry);
           Inc(Loaded);
-        end
-        else
+        end else
+        begin
+          WriteLn(Output, '[delphi-ast] '+key+' already in cache');
           Entry.Node.Free; // Already loaded by another path
+        end;
       finally
         FLock.EndWrite;
       end;
@@ -353,6 +378,8 @@ begin
 end;
 
 procedure TASTParser.HandleFileChanged(const AFullPath: string);
+var
+  Thread: TThread;
 begin
   WriteLn(ErrOutput, '[delphi-ast] File changed: ' + AFullPath);
   InvalidateFile(AFullPath);
@@ -370,7 +397,11 @@ begin
   // Use CompareExchange to prevent concurrent re-walks
   if TInterlocked.CompareExchange(FRewalking, 1, 0) = 0 then
   begin
-    TThread.CreateAnonymousThread(
+    // Wait for any running parse thread to complete first
+    WaitForParseThread;
+
+    // Spawn tracked thread for re-walk
+    Thread := TThread.CreateAnonymousThread(
       procedure
       begin
         try
@@ -378,7 +409,15 @@ begin
         finally
           TInterlocked.Exchange(FRewalking, 0);
         end;
-      end).Start;
+      end);
+    Thread.FreeOnTerminate := False;
+    FParseThreadLock.Enter;
+    try
+      FParseThread := Thread;
+    finally
+      FParseThreadLock.Leave;
+    end;
+    Thread.Start;
   end
   else
   begin
@@ -390,6 +429,7 @@ procedure TASTParser.Reconfigure(const ARoots: TArray<string>);
 var
   Entry: TCachedTree;
   I: Integer;
+  Thread: TThread;
 begin
   // 1. Stop existing watcher
   if FWatcher <> nil then
@@ -398,7 +438,12 @@ begin
     FreeAndNil(FWatcher);
   end;
 
-  // 2. Clear all cached trees
+  // 2. Cancel and wait for any running parse thread
+  TInterlocked.Exchange(FCancelled, 1);
+  WaitForParseThread;
+  TInterlocked.Exchange(FCancelled, 0);
+
+  // 3. Clear all cached trees
   FLock.BeginWrite;
   try
     for Entry in FCache.Values do
@@ -408,19 +453,19 @@ begin
     FLock.EndWrite;
   end;
 
-  // 3. Set new roots
+  // 4. Set new roots
   SetLength(FRoots, Length(ARoots));
   for I := 0 to High(ARoots) do
     FRoots[I] := IncludeTrailingPathDelimiter(ExpandFileName(ARoots[I]));
 
-  // 4. Reinitialize
+  // 5. Reinitialize
   FIncludeHandler := TSimpleIncludeHandler.Create(FRoots);
   InitCacheDir;
 
   // Reset parse state - will be ready again after ParseAllFiles completes
   TInterlocked.Exchange(FHasParsed, 0);
 
-  // 5. Start new watcher
+  // 6. Start new watcher
   FWatcher := TDirectoryWatcher.Create(FRoots,
     procedure(APath: string)
     begin
@@ -428,8 +473,8 @@ begin
     end);
   TDirectoryWatcher(FWatcher).Start;
 
-  // 6. Background parse
-  TThread.CreateAnonymousThread(
+  // 7. Background parse - tracked thread
+  Thread := TThread.CreateAnonymousThread(
     procedure
     begin
       try
@@ -438,7 +483,15 @@ begin
         on E: Exception do
           WriteLn(ErrOutput, '[delphi-ast] Background parse failed: ' + E.Message);
       end;
-    end).Start;
+    end);
+  Thread.FreeOnTerminate := False;
+  FParseThreadLock.Enter;
+  try
+    FParseThread := Thread;
+  finally
+    FParseThreadLock.Leave;
+  end;
+  Thread.Start;
 end;
 
 function TASTParser.IsConfigured: Boolean;
@@ -465,6 +518,24 @@ begin
   Result.FailedFiles := FFailedFiles;
 end;
 
+procedure TASTParser.WaitForParseThread;
+var
+  Thread: TThread;
+begin
+  FParseThreadLock.Enter;
+  try
+    Thread := FParseThread;
+    FParseThread := nil;
+  finally
+    FParseThreadLock.Leave;
+  end;
+  if Thread <> nil then
+  begin
+    Thread.WaitFor;
+    Thread.Free;
+  end;
+end;
+
 function TASTParser.ListFiles(const NameFilter: string): TArray<string>;
 var
   Files: TStringList;
@@ -482,20 +553,25 @@ begin
     if Length(FRoots) > 0 then
       Root := FRoots[0];
 
-    // Return only project files discovered via dependency walk
-    for FullPath in FProjectFiles do
-    begin
-      Ext := LowerCase(ExtractFileExt(FullPath));
-      if (Ext <> '.pas') and (Ext <> '.dpr') and (Ext <> '.dpk') then
-        Continue;
+    // Return only project files discovered via dependency walk (protected by lock)
+    FProjectFilesLock.BeginRead;
+    try
+      for FullPath in FProjectFiles do
+      begin
+        Ext := LowerCase(ExtractFileExt(FullPath));
+        if (Ext <> '.pas') and (Ext <> '.dpr') and (Ext <> '.dpk') then
+          Continue;
 
-      RelPath := FullPath;
-      if (Root <> '') and FullPath.StartsWith(Root, True) then
-        RelPath := FullPath.Substring(Length(Root));
+        RelPath := FullPath;
+        if (Root <> '') and FullPath.StartsWith(Root, True) then
+          RelPath := FullPath.Substring(Length(Root));
 
-      if (LowerFilter = '') or
-         (Pos(LowerFilter, LowerCase(ExtractFileName(FullPath))) > 0) then
-        Files.Add(RelPath);
+        if (LowerFilter = '') or
+           (Pos(LowerFilter, LowerCase(ExtractFileName(FullPath))) > 0) then
+          Files.Add(RelPath);
+      end;
+    finally
+      FProjectFilesLock.EndRead;
     end;
 
     Result := Files.ToStringArray;
@@ -699,8 +775,13 @@ begin
   Failed := 0;
   Cached := 0;
 
-  // Clear project files list
-  FProjectFiles.Clear;
+  // Clear project files list (protected by lock)
+  FProjectFilesLock.BeginWrite;
+  try
+    FProjectFiles.Clear;
+  finally
+    FProjectFilesLock.EndWrite;
+  end;
 
   // Load persisted cache from disk first
   LoadPersistedCache;
@@ -732,10 +813,15 @@ begin
     // BFS: process files and discover dependencies
     while Queue.Count > 0 do
     begin
+      // Check for cancellation
+      if FCancelled = 1 then
+        Break;
+
       FullPath := Queue.Dequeue;
       Key := LowerCase(FullPath);
 
       try
+        WriteLn(Output, '[delphi-ast] Checking: '+key);
         // Check if already in cache with fresh timestamp
         AlreadyCached := False;
         FLock.BeginRead;
@@ -754,8 +840,13 @@ begin
           FLock.EndRead;
         end;
 
-        // Add to project files
-        FProjectFiles.Add(FullPath);
+        // Add to project files (protected by lock)
+        FProjectFilesLock.BeginWrite;
+        try
+          FProjectFiles.Add(FullPath);
+        finally
+          FProjectFilesLock.EndWrite;
+        end;
 
         // Always parse to extract uses clauses (uses cached tree if fresh)
         Tree := ParseFile(FullPath);
@@ -795,7 +886,12 @@ begin
       end;
     end;
 
-    TInterlocked.Exchange(FTotalFiles, FProjectFiles.Count);
+    FProjectFilesLock.BeginRead;
+    try
+      TInterlocked.Exchange(FTotalFiles, FProjectFiles.Count);
+    finally
+      FProjectFilesLock.EndRead;
+    end;
 
     WriteLn(ErrOutput, '[delphi-ast] Project parse complete: ' +
       IntToStr(Cached) + ' from cache, ' +

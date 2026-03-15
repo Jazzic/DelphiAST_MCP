@@ -19,6 +19,8 @@ type
     procedure TearDownFixture;
 
     [Test] procedure AfterSetProject_ListFilesWorks;
+    [Test] procedure SetProject_CalledTwice_DoesNotCrash;
+    [Test] procedure SetProject_CalledTwiceRapidly_DoesNotCrash;
   end;
 
 implementation
@@ -121,6 +123,147 @@ begin
     Assert.IsTrue(FoundShapes, 'Should contain Shapes.pas');
     Assert.IsTrue(FoundAnimalRegistry, 'Should contain AnimalRegistry.pas');
     Assert.IsTrue(FoundTestProjectDpr, 'Should contain TestProject.dpr');
+  finally
+    Result.Free;
+  end;
+end;
+
+procedure TDirectSetProjectTests.SetProject_CalledTwice_DoesNotCrash;
+var
+  Params: TJSONObject;
+  SetProjectResult: TJSONValue;
+  Result: TJSONValue;
+  Arr: TJSONArray;
+  StartTick: Cardinal;
+  Ready: Boolean;
+begin
+  FProjectPath := ExpandFileName(ExtractFilePath(ParamStr(0)) + '..\tests\test-project');
+
+  // First set_project call
+  Params := TJSONObject.Create;
+  Params.AddPair('path', FProjectPath);
+  try
+    SetProjectResult := FTools.DoSetProject(Params);
+    try
+      Assert.IsNotNull(SetProjectResult, 'First SetProject result should not be null');
+    finally
+      SetProjectResult.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+
+  // Wait for ready
+  StartTick := GetTickCount;
+  Ready := False;
+  repeat
+    if FParser.IsReady then
+    begin
+      Ready := True;
+      Break;
+    end;
+    Sleep(200);
+  until GetTickCount - StartTick > 15000;
+  Assert.IsTrue(Ready, 'Did not become ready after first set_project within 15000ms');
+
+  // Second set_project call - should NOT crash
+  Params := TJSONObject.Create;
+  Params.AddPair('path', FProjectPath);
+  try
+    SetProjectResult := FTools.DoSetProject(Params);
+    try
+      Assert.IsNotNull(SetProjectResult, 'Second SetProject result should not be null');
+    finally
+      SetProjectResult.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+
+  // Wait for ready again
+  StartTick := GetTickCount;
+  Ready := False;
+  repeat
+    if FParser.IsReady then
+    begin
+      Ready := True;
+      Break;
+    end;
+    Sleep(200);
+  until GetTickCount - StartTick > 15000;
+  Assert.IsTrue(Ready, 'Did not become ready after second set_project within 15000ms');
+
+  // Verify ListFiles returns 6 files
+  Result := FTools.DoListFiles(TJSONObject.Create);
+  try
+    Assert.IsNotNull(Result, 'Result is nil');
+    Assert.IsTrue(Result is TJSONArray, 'Result is not TJSONArray');
+    Arr := TJSONArray(Result);
+    Assert.AreEqual(6, Arr.Count, 'Should have exactly 6 files after second set_project');
+  finally
+    Result.Free;
+  end;
+end;
+
+procedure TDirectSetProjectTests.SetProject_CalledTwiceRapidly_DoesNotCrash;
+var
+  Params: TJSONObject;
+  SetProjectResult: TJSONValue;
+  Result: TJSONValue;
+  Arr: TJSONArray;
+  StartTick: Cardinal;
+  Ready: Boolean;
+begin
+  FProjectPath := ExpandFileName(ExtractFilePath(ParamStr(0)) + '..\tests\test-project');
+
+  // First set_project call
+  Params := TJSONObject.Create;
+  Params.AddPair('path', FProjectPath);
+  try
+    SetProjectResult := FTools.DoSetProject(Params);
+    try
+      Assert.IsNotNull(SetProjectResult, 'First SetProject result should not be null');
+    finally
+      SetProjectResult.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+
+  // Immediately call set_project again without waiting - should NOT crash
+  Params := TJSONObject.Create;
+  Params.AddPair('path', FProjectPath);
+  try
+    SetProjectResult := FTools.DoSetProject(Params);
+    try
+      Assert.IsNotNull(SetProjectResult, 'Second SetProject result should not be null');
+    finally
+      SetProjectResult.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+
+  // Now wait for ready
+  StartTick := GetTickCount;
+  Ready := False;
+  repeat
+    if FParser.IsReady then
+    begin
+      Ready := True;
+      Break;
+    end;
+    Sleep(200);
+  until GetTickCount - StartTick > 15000;
+  Assert.IsTrue(Ready, 'Did not become ready within 15000ms');
+
+  // Verify ListFiles returns 6 files
+  Result := FTools.DoListFiles(TJSONObject.Create);
+  try
+    Assert.IsNotNull(Result, 'Result is nil');
+    Assert.IsTrue(Result is TJSONArray, 'Result is not TJSONArray');
+    Arr := TJSONArray(Result);
+    Assert.AreEqual(6, Arr.Count, 'Should have exactly 6 files after rapid double set_project');
   finally
     Result.Free;
   end;

@@ -1283,7 +1283,8 @@ begin
   // Return result
   ResultObj := TJSONObject.Create;
   ResultObj.AddPair('project', ProjectPath);
-  ResultObj.AddPair('files', TJSONNumber.Create(Length(FParser.ListFiles(''))));
+  // Return 0 - file count is meaningless before parsing completes, callers poll is_ready
+  ResultObj.AddPair('files', TJSONNumber.Create(0));
   // Include library paths in response
   LibPathsArr := TJSONArray.Create;
   for I := 1 to High(Roots) do
