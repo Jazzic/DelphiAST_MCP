@@ -114,7 +114,7 @@ begin
 
   Assert.IsTrue(Ready, 'Did not become ready within 15000ms' );
 
-  // Now list_files should work - it returns files from ALL roots (project + library paths)
+  // Now list_files should work - it returns only files discovered via dependency walk
   Result := TMCPTestHelper.CallTool('list_files');
   try
     // If result is an error object, fail with specific message
@@ -128,28 +128,33 @@ begin
     Assert.IsNotNull(Result, 'Result is nil');
     Assert.IsTrue(Result is TJSONArray, 'Arr is not TJSONArray');
     Arr := Result as TJSONArray;
-    // When using set_project with .delphi-ast.json libraryPaths, list_files returns
-    // files from ALL roots (test-project + test-lib), not just the project
-    Assert.IsTrue(Arr.Count >= 7, 'Should have at least 7 files (5 project + 2 lib)');
+    // With dependency-driven parsing, list_files returns only files referenced by the DPR
+    // TestProject.dpr references: Animals, Dog, Cat, AnimalRegistry, Shapes (5 .pas files + 1 .dpr = 6)
+    // test-lib files are NOT included because nothing in test-project references them
+    Assert.AreEqual(6, Arr.Count, 'Should have exactly 6 files (TestProject.dpr + 5 .pas)');
 
     // Verify the test-project files are included
-    Assert.IsTrue(Arr.Count >= 5, 'Should have at least 5 files');
-    // Check that at least the test-project files are present
     var FoundAnimals := False;
     var FoundDog := False;
-    var FoundTestLibTypes := False;
-    var FoundTestLibUtils := False;
+    var FoundCat := False;
+    var FoundAnimalRegistry := False;
+    var FoundShapes := False;
+    var FoundTestProjectDpr := False;
     for var I := 0 to Arr.Count - 1 do
     begin
       if Arr.Items[I].Value = 'Animals.pas' then FoundAnimals := True;
       if Arr.Items[I].Value = 'Dog.pas' then FoundDog := True;
-      if Arr.Items[I].Value = 'TestLib.Types.pas' then FoundTestLibTypes := True;
-      if Arr.Items[I].Value = 'TestLib.Utils.pas' then FoundTestLibUtils := True;
+      if Arr.Items[I].Value = 'Cat.pas' then FoundCat := True;
+      if Arr.Items[I].Value = 'AnimalRegistry.pas' then FoundAnimalRegistry := True;
+      if Arr.Items[I].Value = 'Shapes.pas' then FoundShapes := True;
+      if Arr.Items[I].Value = 'TestProject.dpr' then FoundTestProjectDpr := True;
     end;
     Assert.IsTrue(FoundAnimals, 'Should contain Animals.pas');
     Assert.IsTrue(FoundDog, 'Should contain Dog.pas');
-    Assert.IsTrue(FoundTestLibTypes, 'Should contain TestLib.Types.pas');
-    Assert.IsTrue(FoundTestLibUtils, 'Should contain TestLib.Utils.pas');
+    Assert.IsTrue(FoundCat, 'Should contain Cat.pas');
+    Assert.IsTrue(FoundAnimalRegistry, 'Should contain AnimalRegistry.pas');
+    Assert.IsTrue(FoundShapes, 'Should contain Shapes.pas');
+    Assert.IsTrue(FoundTestProjectDpr, 'Should contain TestProject.dpr');
   finally
     Result.Free;
   end;

@@ -60,6 +60,9 @@ uses
   { Find the AST node at a specific file position }
   function SymbolAtPosition(Tree: TSyntaxNode; Line, Col: Integer): TJSONObject;
 
+  { Extract all unit names from both interface and implementation uses clauses }
+  function ExtractUnitNames(Tree: TSyntaxNode): TArray<string>;
+
 implementation
 
 uses
@@ -296,6 +299,69 @@ begin
     Name := NodeName(Child);
     if Name <> '' then
       Result.Add(Name);
+  end;
+end;
+
+function ExtractUnitNames(Tree: TSyntaxNode): TArray<string>;
+var
+  IntfNode, ImplNode, UsesNode: TSyntaxNode;
+  Child: TSyntaxNode;
+  Name: string;
+  List: TList<string>;
+begin
+  Result := nil;
+  if Tree = nil then
+    Exit;
+
+  List := TList<string>.Create;
+  try
+    // Check for uses clause at root level (DPR files)
+    UsesNode := Tree.FindNode(ntUses);
+    if UsesNode <> nil then
+    begin
+      for Child in UsesNode.ChildNodes do
+      begin
+        Name := NodeName(Child);
+        if (Name <> '') and (List.IndexOf(Name) < 0) then
+          List.Add(Name);
+      end;
+    end;
+
+    // Also check interface section (for unit files)
+    IntfNode := Tree.FindNode(ntInterface);
+    if IntfNode <> nil then
+    begin
+      UsesNode := IntfNode.FindNode(ntUses);
+      if UsesNode <> nil then
+      begin
+        for Child in UsesNode.ChildNodes do
+        begin
+          Name := NodeName(Child);
+          if (Name <> '') and (List.IndexOf(Name) < 0) then
+            List.Add(Name);
+        end;
+      end;
+    end;
+
+    // Also check implementation section
+    ImplNode := Tree.FindNode(ntImplementation);
+    if ImplNode <> nil then
+    begin
+      UsesNode := ImplNode.FindNode(ntUses);
+      if UsesNode <> nil then
+      begin
+        for Child in UsesNode.ChildNodes do
+        begin
+          Name := NodeName(Child);
+          if (Name <> '') and (List.IndexOf(Name) < 0) then
+            List.Add(Name);
+        end;
+      end;
+    end;
+
+    Result := List.ToArray;
+  finally
+    List.Free;
   end;
 end;
 

@@ -47,8 +47,12 @@ type
     FParsedFiles: Integer;
     FCachedFiles: Integer;
     FFailedFiles: Integer;
+    FProjectFiles: TList<string>;
+    FRewalking: Integer;
 
     function GetProjectRoot: string;
+    function ResolveUnitFile(const UnitName: string): string;
+    procedure ParseProjectFiles;
     procedure InitCacheDir;
     function GetCacheFilePath(const Key: string): string;
     procedure SaveCacheEntryToDisk(const Key: string; const Entry: TCachedTree);
@@ -81,7 +85,7 @@ type
 implementation
 
 uses
-  System.Hash, AST.Serialize, AST.Watcher;
+  System.Hash, AST.Serialize, AST.Watcher, AST.Query;
 
 { TSimpleIncludeHandler }
 
@@ -152,6 +156,8 @@ var
 begin
   inherited Create;
   FCache := TDictionary<string, TCachedTree>.Create;
+  FProjectFiles := TList<string>.Create;
+  FRewalking := 0;
 
   if Length(ARoots) > 0 then
   begin
@@ -169,12 +175,12 @@ begin
       end);
     TDirectoryWatcher(FWatcher).Start;
 
-    // Eager-parse all files in background
+    // Eager-parse project files (dependency-driven) in background
     TThread.CreateAnonymousThread(
       procedure
       begin
         try
-          ParseAllFiles;
+          ParseProjectFiles;
         except
           on E: Exception do
             WriteLn(ErrOutput, '[delphi-ast] Background parse failed: ' + E.Message);
@@ -200,6 +206,7 @@ begin
     for Entry in FCache.Values do
       Entry.Node.Free;
     FCache.Free;
+    FProjectFiles.Free;
   finally
     FLock.EndWrite;
   end;
@@ -349,13 +356,33 @@ procedure TASTParser.HandleFileChanged(const AFullPath: string);
 begin
   WriteLn(ErrOutput, '[delphi-ast] File changed: ' + AFullPath);
   InvalidateFile(AFullPath);
-  // Re-parse immediately
+
+  // Re-parse the changed file immediately
   try
     ParseFile(AFullPath);
     WriteLn(ErrOutput, '[delphi-ast] Re-parsed: ' + AFullPath);
   except
     on E: Exception do
       WriteLn(ErrOutput, '[delphi-ast] Failed to re-parse ' + AFullPath + ': ' + E.Message);
+  end;
+
+  // Re-walk dependencies to handle added/removed uses clauses
+  // Use CompareExchange to prevent concurrent re-walks
+  if TInterlocked.CompareExchange(FRewalking, 1, 0) = 0 then
+  begin
+    TThread.CreateAnonymousThread(
+      procedure
+      begin
+        try
+          ParseProjectFiles;
+        finally
+          TInterlocked.Exchange(FRewalking, 0);
+        end;
+      end).Start;
+  end
+  else
+  begin
+    WriteLn(ErrOutput, '[delphi-ast] Re-walk already in progress, skipping');
   end;
 end;
 
@@ -406,7 +433,7 @@ begin
     procedure
     begin
       try
-        ParseAllFiles;
+        ParseProjectFiles;
       except
         on E: Exception do
           WriteLn(ErrOutput, '[delphi-ast] Background parse failed: ' + E.Message);
@@ -441,8 +468,7 @@ end;
 function TASTParser.ListFiles(const NameFilter: string): TArray<string>;
 var
   Files: TStringList;
-  AllFiles: TArray<string>;
-  F, RelPath, LowerFilter, Root, Ext: string;
+  FullPath, RelPath, LowerFilter, Root, Ext: string;
   I: Integer;
 begin
   Files := TStringList.Create;
@@ -451,29 +477,25 @@ begin
     Files.Duplicates := dupIgnore;
     LowerFilter := LowerCase(NameFilter);
 
-    for I := 0 to High(FRoots) do
+    // Get the project root for relative path calculation
+    Root := '';
+    if Length(FRoots) > 0 then
+      Root := FRoots[0];
+
+    // Return only project files discovered via dependency walk
+    for FullPath in FProjectFiles do
     begin
-      Root := FRoots[I];
-      if not DirectoryExists(Root) then
+      Ext := LowerCase(ExtractFileExt(FullPath));
+      if (Ext <> '.pas') and (Ext <> '.dpr') and (Ext <> '.dpk') then
         Continue;
 
-      AllFiles := TDirectory.GetFiles(Root, '*.*',
-        TSearchOption.soAllDirectories);
+      RelPath := FullPath;
+      if (Root <> '') and FullPath.StartsWith(Root, True) then
+        RelPath := FullPath.Substring(Length(Root));
 
-      for F in AllFiles do
-      begin
-        Ext := LowerCase(ExtractFileExt(F));
-        if (Ext <> '.pas') and (Ext <> '.dpr') and (Ext <> '.dpk') then
-          Continue;
-
-        RelPath := F;
-        if RelPath.StartsWith(Root, True) then
-          RelPath := RelPath.Substring(Length(Root));
-
-        if (LowerFilter = '') or
-           (Pos(LowerFilter, LowerCase(ExtractFileName(F))) > 0) then
-          Files.Add(RelPath);
-      end;
+      if (LowerFilter = '') or
+         (Pos(LowerFilter, LowerCase(ExtractFileName(FullPath))) > 0) then
+        Files.Add(RelPath);
     end;
 
     Result := Files.ToStringArray;
@@ -625,6 +647,168 @@ begin
       IntToStr(Parsed) + ' parsed, ' +
       IntToStr(Failed) + ' failed');
   finally
+    TInterlocked.Exchange(FParseState, Integer(psIdle));
+    TInterlocked.Exchange(FHasParsed, 1);
+  end;
+end;
+
+function TASTParser.ResolveUnitFile(const UnitName: string): string;
+var
+  I: Integer;
+  FullPath, SearchFile: string;
+begin
+  Result := '';
+
+  // Convert unit name to file name (e.g., TestLib.Utils -> TestLib.Utils.pas)
+  SearchFile := UnitName + '.pas';
+
+  // Search in each root directory
+  for I := 0 to High(FRoots) do
+  begin
+    FullPath := TPath.Combine(FRoots[I], SearchFile);
+    if FileExists(FullPath) then
+    begin
+      Result := TPath.GetFullPath(FullPath);
+      Exit;
+    end;
+  end;
+end;
+
+procedure TASTParser.ParseProjectFiles;
+var
+  DPRFiles: TArray<string>;
+  DPR, FullPath, UnitFile, Key: string;
+  Queue: TQueue<string>;
+  Visited: TDictionary<string, Boolean>;
+  UnitNames: TArray<string>;
+  UnitName: string;
+  Tree: TSyntaxNode;
+  Parsed, Failed, Cached: Integer;
+  Entry: TCachedTree;
+  AlreadyCached: Boolean;
+  FileTime: TDateTime;
+begin
+  // Set parsing state and reset counters
+  TInterlocked.Exchange(FParseState, Integer(psParsing));
+  TInterlocked.Exchange(FParsedFiles, 0);
+  TInterlocked.Exchange(FCachedFiles, 0);
+  TInterlocked.Exchange(FFailedFiles, 0);
+  TInterlocked.Exchange(FTotalFiles, 0);
+
+  Parsed := 0;
+  Failed := 0;
+  Cached := 0;
+
+  // Clear project files list
+  FProjectFiles.Clear;
+
+  // Load persisted cache from disk first
+  LoadPersistedCache;
+
+  // Find all DPR files in the project root (first root only)
+  if Length(FRoots) = 0 then
+  begin
+    TInterlocked.Exchange(FParseState, Integer(psIdle));
+    TInterlocked.Exchange(FHasParsed, 1);
+    Exit;
+  end;
+
+  DPRFiles := TDirectory.GetFiles(FRoots[0], '*.dpr');
+
+  if Length(DPRFiles) = 0 then
+  begin
+    // No DPR files found - fall back to parsing all files
+    WriteLn(ErrOutput, '[delphi-ast] No DPR files found, falling back to all files');
+    ParseAllFiles;
+    Exit;
+  end;
+
+  Queue := TQueue<string>.Create;
+  Visited := TDictionary<string, Boolean>.Create;
+  try
+    // Add all DPR files to the queue
+    for DPR in DPRFiles do
+    begin
+      FullPath := TPath.GetFullPath(DPR);
+      Queue.Enqueue(FullPath);
+      Visited.AddOrSetValue(LowerCase(FullPath), True);
+    end;
+
+    // BFS: process files and discover dependencies
+    while Queue.Count > 0 do
+    begin
+      FullPath := Queue.Dequeue;
+      Key := LowerCase(FullPath);
+
+      try
+        // Check if already in cache with fresh timestamp
+        AlreadyCached := False;
+        FLock.BeginRead;
+        try
+          if FCache.TryGetValue(Key, Entry) then
+          begin
+            if FileExists(FullPath) and
+               (TFile.GetLastWriteTime(FullPath) <= Entry.ModifiedAt) then
+            begin
+              AlreadyCached := True;
+              Inc(Cached);
+              TInterlocked.Increment(FCachedFiles);
+            end;
+          end;
+        finally
+          FLock.EndRead;
+        end;
+
+        // Add to project files
+        FProjectFiles.Add(FullPath);
+
+        // Always parse to extract uses clauses (uses cached tree if fresh)
+        Tree := ParseFile(FullPath);
+
+        if not AlreadyCached then
+        begin
+          Inc(Parsed);
+          TInterlocked.Increment(FParsedFiles);
+        end;
+
+        // Extract uses clauses and add new units to queue
+        if Tree <> nil then
+        begin
+          UnitNames := ExtractUnitNames(Tree);
+          for UnitName in UnitNames do
+          begin
+            // Try to resolve unit name to a file path
+            UnitFile := ResolveUnitFile(UnitName);
+            if UnitFile <> '' then
+            begin
+              // If not already visited, add to queue
+              if not Visited.ContainsKey(LowerCase(UnitFile)) then
+              begin
+                Visited.AddOrSetValue(LowerCase(UnitFile), True);
+                Queue.Enqueue(UnitFile);
+              end;
+            end;
+          end;
+        end;
+      except
+        on E: Exception do
+        begin
+          Inc(Failed);
+          TInterlocked.Increment(FFailedFiles);
+          WriteLn(ErrOutput, '[delphi-ast] Failed to parse ' + FullPath + ': ' + E.Message);
+        end;
+      end;
+    end;
+
+    TInterlocked.Exchange(FTotalFiles, FProjectFiles.Count);
+
+    WriteLn(ErrOutput, '[delphi-ast] Project parse complete: ' +
+      IntToStr(Cached) + ' from cache, ' +
+      IntToStr(Parsed) + ' parsed, ' +
+      IntToStr(Failed) + ' failed');
+  finally
+    Queue.Free;
+    Visited.Free;
     TInterlocked.Exchange(FParseState, Integer(psIdle));
     TInterlocked.Exchange(FHasParsed, 1);
   end;
