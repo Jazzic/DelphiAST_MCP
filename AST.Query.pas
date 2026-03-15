@@ -48,6 +48,22 @@ uses
       Kind: string;
     end;
 
+    TDescendantInfo = record
+      Name: string;
+      FileName: string;
+      Line: Integer;
+      Depth: Integer;
+      Kind: string;
+    end;
+
+    TSymbolMatch = record
+      Name: string;
+      Kind: string;
+      FileName: string;
+      Line: Integer;
+      Relevance: Integer; // 0=exact, 1=prefix, 2=substring
+    end;
+
   { Locate a symbol (method or type) and return its line range }
   function LocateSymbol(Tree: TSyntaxNode; const SymbolName: string): TSymbolLocation;
 
@@ -63,10 +79,18 @@ uses
   { Extract all unit names from both interface and implementation uses clauses }
   function ExtractUnitNames(Tree: TSyntaxNode): TArray<string>;
 
+  { Find all types that inherit from a given type across all parsed files }
+  function FindDescendants(AllTrees: TArray<TPair<string, TSyntaxNode>>;
+    const TypeName: string; MaxDepth: Integer): TArray<TDescendantInfo>;
+
+  { Search for symbols by name across all parsed files }
+  function SearchSymbols(AllTrees: TArray<TPair<string, TSyntaxNode>>;
+    const Pattern, Kind: string; MaxResults: Integer): TArray<TSymbolMatch>;
+
 implementation
 
 uses
-  StrUtils;
+  StrUtils, Math;
 
 { ----- helpers ----- }
 
@@ -1812,6 +1836,74 @@ begin
   end;
 end;
 
+{ ----- Helper functions ----- }
+
+function ExtractTypeKind(TypeNode: TSyntaxNode): string;
+var
+  Child: TSyntaxNode;
+begin
+  Result := '';
+  if TypeNode = nil then
+    Exit;
+
+  // First check the anType attribute (set by DelphiAST for class/interface/etc)
+  Result := TypeNode.GetAttribute(anType);
+  if Result = '' then
+  begin
+    Result := NodeName(TypeNode);
+    // If still empty, infer from node structure
+    if Result = '' then
+    begin
+      if TypeNode.HasChildren then
+      begin
+        for Child in TypeNode.ChildNodes do
+          if Child.Typ in [ntPublic, ntPrivate, ntProtected, ntPublished,
+            ntStrictPrivate, ntStrictProtected] then
+          begin
+            Result := 'class';
+            Break;
+          end;
+      end;
+      if Result = '' then
+        Result := 'class';
+    end;
+  end;
+end;
+
+procedure CollectDeclarationsFromTree(Tree: TSyntaxNode; DeclList: TList<TSyntaxNode>);
+var
+  Child: TSyntaxNode;
+begin
+  if Tree = nil then
+    Exit;
+
+  case Tree.Typ of
+    ntTypeDecl, ntMethod, ntVariable, ntConstant:
+      begin
+        if NodeName(Tree) <> '' then
+          DeclList.Add(Tree);
+      end;
+  end;
+
+  for Child in Tree.ChildNodes do
+    CollectDeclarationsFromTree(Child, DeclList);
+end;
+
+function GetNodeKind(Node: TSyntaxNode): string;
+begin
+  Result := '';
+  case Node.Typ of
+    ntTypeDecl: Result := 'type';
+    ntMethod: Result := 'method';
+    ntVariable: Result := 'variable';
+    ntConstant: Result := 'constant';
+    ntProperty: Result := 'property';
+    ntField: Result := 'field';
+  else
+    Result := NodeTypeName(Node);
+  end;
+end;
+
 { ----- ExtractCallsFromMethod ----- }
 
 function ExtractCallsFromMethod(Tree: TSyntaxNode; const MethodName: string): TArray<TCallInfo>;
@@ -1888,6 +1980,245 @@ begin
   finally
     DotNodes.Free;
     CallNodes.Free;
+    Results.Free;
+  end;
+end;
+
+{ ----- FindDescendants ----- }
+
+function FindDescendants(AllTrees: TArray<TPair<string, TSyntaxNode>>;
+  const TypeName: string; MaxDepth: Integer): TArray<TDescendantInfo>;
+var
+  ChildrenOf: TDictionary<string, TList<TDescendantInfo>>;
+  TypeDecls: TList<TSyntaxNode>;
+  TypeDecl, TypeNode, AncChild: TSyntaxNode;
+  TypeName2, Kind, LowerAnc: string;
+  Info: TDescendantInfo;
+  Queue: TQueue<TPair<string, Integer>>;
+  Visited: TDictionary<string, Boolean>;
+  Current: TPair<string, Integer>;
+  Children: TList<TDescendantInfo>;
+  ChildInfo: TDescendantInfo;
+  Pair: TPair<string, TSyntaxNode>;
+begin
+  Result := nil;
+
+  if MaxDepth <= 0 then
+    MaxDepth := 100; // treat 0/-1 as unlimited
+
+  ChildrenOf := TDictionary<string, TList<TDescendantInfo>>.Create;
+  TypeDecls := TList<TSyntaxNode>.Create;
+  Visited := TDictionary<string, Boolean>.Create;
+  try
+    // Phase 1: Build parent->children map
+    for Pair in AllTrees do
+    begin
+      TypeDecls.Clear;
+      CollectNodes(Pair.Value, ntTypeDecl, TypeDecls);
+      for TypeDecl in TypeDecls do
+      begin
+        TypeName2 := NodeName(TypeDecl);
+        if TypeName2 = '' then
+          Continue;
+
+        // Determine kind
+        TypeNode := TypeDecl.FindNode(ntType);
+        if TypeNode <> nil then
+          Kind := ExtractTypeKind(TypeNode)
+        else
+          Kind := 'type';
+
+        Info.Name := TypeName2;
+        Info.FileName := Pair.Key;
+        Info.Line := TypeDecl.Line;
+        Info.Kind := Kind;
+
+        // Get ancestors
+        if TypeNode <> nil then
+        begin
+          for AncChild in TypeNode.ChildNodes do
+          begin
+            if AncChild.Typ = ntType then
+            begin
+              LowerAnc := LowerCase(NodeName(AncChild));
+              if LowerAnc <> '' then
+              begin
+                if not ChildrenOf.TryGetValue(LowerAnc, Children) then
+                begin
+                  Children := TList<TDescendantInfo>.Create;
+                  ChildrenOf.Add(LowerAnc, Children);
+                end;
+                Children.Add(Info);
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+
+    // Phase 2: BFS from TypeName
+    Queue := TQueue<TPair<string, Integer>>.Create;
+    try
+      Queue.Enqueue(TPair<string, Integer>.Create(LowerCase(TypeName), 0));
+
+      while Queue.Count > 0 do
+      begin
+        Current := Queue.Dequeue;
+        if Visited.ContainsKey(Current.Key) then
+          Continue;
+        Visited.Add(Current.Key, True);
+
+        // Skip if we've reached max depth (but still add to results)
+        if (Current.Value > MaxDepth) and (MaxDepth < 100) then
+          Continue;
+
+        if ChildrenOf.TryGetValue(Current.Key, Children) then
+        begin
+          for ChildInfo in Children do
+          begin
+            if not Visited.ContainsKey(LowerCase(ChildInfo.Name)) then
+            begin
+              // Add to results with depth
+              SetLength(Result, Length(Result) + 1);
+              Result[High(Result)] := ChildInfo;
+              Result[High(Result)].Depth := Current.Value + 1;
+
+              // Enqueue children if within depth
+              if Current.Value + 1 < MaxDepth then
+                Queue.Enqueue(TPair<string, Integer>.Create(LowerCase(ChildInfo.Name), Current.Value + 1));
+            end;
+          end;
+        end;
+      end;
+    finally
+      Queue.Free;
+    end;
+  finally
+    // Free all child lists
+    for Children in ChildrenOf.Values do
+      Children.Free;
+    ChildrenOf.Free;
+    TypeDecls.Free;
+    Visited.Free;
+  end;
+end;
+
+{ ----- SearchSymbols ----- }
+
+function SearchSymbols(AllTrees: TArray<TPair<string, TSyntaxNode>>;
+  const Pattern, Kind: string; MaxResults: Integer): TArray<TSymbolMatch>;
+var
+  AllDecls: TList<TSyntaxNode>;
+  N: TSyntaxNode;
+  Name, DeclKind, LowerPattern: string;
+  Obj: TJSONObject;
+  Results: TList<TSymbolMatch>;
+  Match: TSymbolMatch;
+  Pair: TPair<string, TSyntaxNode>;
+begin
+  Result := nil;
+
+  if MaxResults <= 0 then
+    MaxResults := 50;
+
+  LowerPattern := LowerCase(Pattern);
+  AllDecls := TList<TSyntaxNode>.Create;
+  Results := TList<TSymbolMatch>.Create;
+  try
+    // Collect all declarations across all trees
+    for Pair in AllTrees do
+    begin
+      AllDecls.Clear;
+      CollectDeclarationsFromTree(Pair.Value, AllDecls);
+
+      for N in AllDecls do
+      begin
+        Name := NodeName(N);
+        if Name = '' then
+          Continue;
+
+        // Match against pattern (case-insensitive substring)
+        if (LowerPattern <> '') and (Pos(LowerPattern, LowerCase(Name)) = 0) then
+          Continue;
+
+        // Determine the kind, with special handling for type declarations
+        if N.Typ = ntTypeDecl then
+        begin
+          // For type declarations, get the specific kind (class, interface, record, etc)
+          var TypeNode := N.FindNode(ntType);
+          if TypeNode <> nil then
+            DeclKind := ExtractTypeKind(TypeNode)
+          else
+            DeclKind := 'type';
+        end
+        else
+        begin
+          DeclKind := GetNodeKind(N);
+        end;
+
+        // Filter by kind
+        if (Kind <> '') and (Kind <> 'all') then
+        begin
+          // Special case: 'type' maps to any type declaration without specific kind
+          if SameText(Kind, 'type') then
+          begin
+            if N.Typ <> ntTypeDecl then
+              Continue;
+          end
+          else
+          begin
+            // For specific kinds like 'class', 'interface', etc.
+            // Type declarations must match the specific kind; others must match exactly
+            if N.Typ = ntTypeDecl then
+            begin
+              if not SameText(DeclKind, Kind) then
+                Continue;
+            end
+            else
+            begin
+              if not SameText(DeclKind, Kind) then
+                Continue;
+            end;
+          end;
+        end;
+
+        Match.Name := Name;
+        Match.Kind := DeclKind;
+        Match.FileName := Pair.Key;
+        Match.Line := N.Line;
+
+        // Calculate relevance: 0=exact, 1=prefix, 2=substring
+        if SameText(Name, Pattern) then
+          Match.Relevance := 0
+        else if SameText(Copy(Name, 1, Length(Pattern)), Pattern) then
+          Match.Relevance := 1
+        else
+          Match.Relevance := 2;
+
+        Results.Add(Match);
+      end;
+    end;
+
+    // Sort by relevance, then alphabetically (simple bubble sort)
+    for var I := 0 to Results.Count - 1 do
+      for var J := I + 1 to Results.Count - 1 do
+      begin
+        if (Results[I].Relevance > Results[J].Relevance) or
+           ((Results[I].Relevance = Results[J].Relevance) and
+            (CompareText(Results[I].Name, Results[J].Name) > 0)) then
+        begin
+          var Temp := Results[I];
+          Results[I] := Results[J];
+          Results[J] := Temp;
+        end;
+      end;
+
+    // Truncate to max results
+    SetLength(Result, Min(Results.Count, MaxResults));
+    for var I := 0 to High(Result) do
+      Result[I] := Results[I];
+  finally
+    AllDecls.Free;
     Results.Free;
   end;
 end;

@@ -30,6 +30,8 @@ type
     function DoSetProject(Params: TJSONObject): TJSONValue;
     function DoGetStatus(Params: TJSONObject): TJSONValue;
     function DoIsReady(Params: TJSONObject): TJSONValue;
+    function DoFindDescendants(Params: TJSONObject): TJSONValue;
+    function DoSearchSymbols(Params: TJSONObject): TJSONValue;
 
     property Parser: TASTParser read FParser;
   end;
@@ -223,6 +225,25 @@ begin
     'Returns {"ready": true} when the server has finished parsing and is ready to serve requests, ' +
     '"{"ready": false} otherwise. Use this after set_project to wait for parsing to complete.',
     MakeInputSchema(Props, [])));
+
+  // 16. find_descendants
+  Props := TJSONObject.Create;
+  Props.AddPair('type_name', MakeStringProp('Ancestor type name to find descendants of'));
+  Props.AddPair('max_depth', MakeIntProp('Max depth to recurse. 1=direct children only, 0=unlimited. Default 0.', 0));
+  Result.Add(MakeTool('find_descendants',
+    'Find all types that inherit from a given type across all parsed files. ' +
+    'The downward counterpart to resolve_inheritance. Returns descendants with depth info.',
+    MakeInputSchema(Props, ['type_name'])));
+
+  // 17. search_symbols
+  Props := TJSONObject.Create;
+  Props.AddPair('pattern', MakeStringProp('Search pattern (substring match, case-insensitive)'));
+  Props.AddPair('kind', MakeStringProp('Filter by kind: class, interface, record, method, property, field, type, all. Default: all.'));
+  Props.AddPair('max_results', MakeIntProp('Maximum results to return. Default 50.', 50));
+  Result.Add(MakeTool('search_symbols',
+    'Search for symbols by name across all parsed files. ' +
+    'Supports substring matching with relevance ranking (exact > prefix > substring).',
+    MakeInputSchema(Props, ['pattern'])));
 end;
 
 function TMCPTools.CallTool(const ToolName: string; Params: TJSONObject): TJSONValue;
@@ -278,6 +299,10 @@ begin
       Result := DoGetCallGraph(Params)
     else if ToolName = 'set_project' then
       Result := DoSetProject(Params)
+    else if ToolName = 'find_descendants' then
+      Result := DoFindDescendants(Params)
+    else if ToolName = 'search_symbols' then
+      Result := DoSearchSymbols(Params)
     else
     begin
       Result := TJSONObject.Create;
@@ -1318,6 +1343,72 @@ begin
   Obj := TJSONObject.Create;
   Obj.AddPair('ready', TJSONBool.Create(FParser.IsReady));
   Result := Obj;
+end;
+
+function TMCPTools.DoFindDescendants(Params: TJSONObject): TJSONValue;
+var
+  TypeName: string;
+  MaxDepth: Integer;
+  AllTrees: TArray<TPair<string, TSyntaxNode>>;
+  Descendants: TArray<TDescendantInfo>;
+  Arr: TJSONArray;
+  Info: TDescendantInfo;
+  Obj, ResultObj: TJSONObject;
+begin
+  TypeName := GetStr(Params, 'type_name');
+  MaxDepth := GetInt(Params, 'max_depth', 0);
+
+  AllTrees := FParser.GetAllTrees;
+  Descendants := FindDescendants(AllTrees, TypeName, MaxDepth);
+
+  Arr := TJSONArray.Create;
+  for Info in Descendants do
+  begin
+    Obj := TJSONObject.Create;
+    Obj.AddPair('name', Info.Name);
+    Obj.AddPair('file', Info.FileName);
+    Obj.AddPair('line', TJSONNumber.Create(Info.Line));
+    Obj.AddPair('depth', TJSONNumber.Create(Info.Depth));
+    Obj.AddPair('kind', Info.Kind);
+    Arr.Add(Obj);
+  end;
+
+  ResultObj := TJSONObject.Create;
+  ResultObj.AddPair('type_name', TypeName);
+  ResultObj.AddPair('descendants', Arr);
+  ResultObj.AddPair('count', TJSONNumber.Create(Length(Descendants)));
+  Result := ResultObj;
+end;
+
+function TMCPTools.DoSearchSymbols(Params: TJSONObject): TJSONValue;
+var
+  Pattern, Kind: string;
+  MaxResults: Integer;
+  AllTrees: TArray<TPair<string, TSyntaxNode>>;
+  Matches: TArray<TSymbolMatch>;
+  Arr: TJSONArray;
+  Match: TSymbolMatch;
+  Obj: TJSONObject;
+begin
+  Pattern := GetStr(Params, 'pattern');
+  Kind := GetStr(Params, 'kind');
+  MaxResults := GetInt(Params, 'max_results', 50);
+
+  AllTrees := FParser.GetAllTrees;
+  Matches := SearchSymbols(AllTrees, Pattern, Kind, MaxResults);
+
+  Arr := TJSONArray.Create;
+  for Match in Matches do
+  begin
+    Obj := TJSONObject.Create;
+    Obj.AddPair('name', Match.Name);
+    Obj.AddPair('kind', Match.Kind);
+    Obj.AddPair('file', Match.FileName);
+    Obj.AddPair('line', TJSONNumber.Create(Match.Line));
+    Arr.Add(Obj);
+  end;
+
+  Result := Arr;
 end;
 
 end.

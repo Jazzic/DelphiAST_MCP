@@ -46,6 +46,8 @@ uses
   Tests.DirectTools.GetCallGraph in 'Tests.DirectTools.GetCallGraph.pas',
   Tests.DirectTools.GetStatus in 'Tests.DirectTools.GetStatus.pas',
   Tests.DirectTools.SetProject in 'Tests.DirectTools.SetProject.pas',
+  Tests.DirectTools.FindDescendants in 'Tests.DirectTools.FindDescendants.pas',
+  Tests.DirectTools.SearchSymbols in 'Tests.DirectTools.SearchSymbols.pas',
   AST.Parser in '..\AST.Parser.pas',
   MCP.Tools in '..\MCP.Tools.pas',
   AST.Watcher in '..\AST.Watcher.pas',
