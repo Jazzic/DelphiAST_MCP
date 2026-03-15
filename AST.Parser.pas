@@ -716,12 +716,7 @@ begin
   DPRFiles := TDirectory.GetFiles(FRoots[0], '*.dpr');
 
   if Length(DPRFiles) = 0 then
-  begin
-    // No DPR files found - fall back to parsing all files
-    WriteLn(ErrOutput, '[delphi-ast] No DPR files found, falling back to all files');
-    ParseAllFiles;
-    Exit;
-  end;
+    raise Exception.Create('No .dpr files found in project root: ' + FRoots[0]);
 
   Queue := TQueue<string>.Create;
   Visited := TDictionary<string, Boolean>.Create;

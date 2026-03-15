@@ -1269,6 +1269,14 @@ begin
   // Expand each root to include all subdirectories recursively
   Roots := ExpandWithSubdirs(Roots);
 
+  // Require at least one DPR file in the project root
+  if Length(TDirectory.GetFiles(ProjectPath, '*.dpr')) = 0 then
+  begin
+    Result := TJSONObject.Create;
+    TJSONObject(Result).AddPair('error', 'No .dpr files found in: ' + ProjectPath);
+    Exit;
+  end;
+
   // Reconfigure parser with new roots
   FParser.Reconfigure(Roots);
 
