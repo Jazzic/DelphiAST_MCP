@@ -13,6 +13,7 @@ type
     class var FTools: TMCPTools;
     class var FProjectPath: string;
     class var FTimeout: Cardinal;
+    class function FindNodeInTree(Arr: TJSONArray; const Name: string): TJSONObject;
   public
     [SetupFixture]
     procedure SetupFixture;
@@ -34,6 +35,27 @@ uses
   System.SysUtils, Winapi.Windows;
 
 { TDirectToolsFindDescendantsTests }
+
+class function TDirectToolsFindDescendantsTests.FindNodeInTree(Arr: TJSONArray; const Name: string): TJSONObject;
+var
+  I: Integer;
+  Obj: TJSONObject;
+  ChildResult: TJSONObject;
+begin
+  Result := nil;
+  if Arr = nil then
+    Exit;
+  for I := 0 to Arr.Count - 1 do
+  begin
+    Obj := Arr[I] as TJSONObject;
+    if Obj.GetValue<string>('name') = Name then
+      Exit(Obj);
+    // Recurse into descendants
+    ChildResult := FindNodeInTree(Obj.GetValue<TJSONArray>('descendants'), Name);
+    if ChildResult <> nil then
+      Exit(ChildResult);
+  end;
+end;
 
 procedure TDirectToolsFindDescendantsTests.SetupFixture;
 begin
@@ -61,8 +83,7 @@ var
   Result: TJSONValue;
   Obj: TJSONObject;
   Descendants: TJSONArray;
-  FoundDog, FoundCat: Boolean;
-  I: Integer;
+  DogNode, CatNode: TJSONObject;
 begin
   Params := TJSONObject.Create;
   Params.AddPair('type_name', 'TAnimal');
@@ -80,18 +101,15 @@ begin
       Descendants := Obj.GetValue<TJSONArray>('descendants');
       Assert.IsNotNull(Descendants, 'Descendants should be an array');
 
-      // Should find TDog and TCat
-      FoundDog := False;
-      FoundCat := False;
-      for I := 0 to Descendants.Count - 1 do
-      begin
-        if Descendants[I].GetValue<string>('name') = 'TDog' then
-          FoundDog := True;
-        if Descendants[I].GetValue<string>('name') = 'TCat' then
-          FoundCat := True;
-      end;
-      Assert.IsTrue(FoundDog, 'Should find TDog as descendant of TAnimal');
-      Assert.IsTrue(FoundCat, 'Should find TCat as descendant of TAnimal');
+      // TDog and TCat should be direct children at root level
+      DogNode := FindNodeInTree(Descendants, 'TDog');
+      CatNode := FindNodeInTree(Descendants, 'TCat');
+      Assert.IsNotNull(DogNode, 'Should find TDog as descendant of TAnimal');
+      Assert.IsNotNull(CatNode, 'Should find TCat as descendant of TAnimal');
+
+      // Each should have a descendants array
+      Assert.IsNotNull(DogNode.GetValue<TJSONArray>('descendants'), 'TDog should have descendants array');
+      Assert.IsNotNull(CatNode.GetValue<TJSONArray>('descendants'), 'TCat should have descendants array');
     finally
       Result.Free;
     end;
@@ -106,8 +124,7 @@ var
   Result: TJSONValue;
   Obj: TJSONObject;
   Descendants: TJSONArray;
-  FoundCircle, FoundRectangle: Boolean;
-  I: Integer;
+  CircleNode, RectNode: TJSONObject;
 begin
   Params := TJSONObject.Create;
   Params.AddPair('type_name', 'TShape');
@@ -122,17 +139,10 @@ begin
       Descendants := Obj.GetValue<TJSONArray>('descendants');
       Assert.IsNotNull(Descendants, 'Descendants should be an array');
 
-      FoundCircle := False;
-      FoundRectangle := False;
-      for I := 0 to Descendants.Count - 1 do
-      begin
-        if Descendants[I].GetValue<string>('name') = 'TCircle' then
-          FoundCircle := True;
-        if Descendants[I].GetValue<string>('name') = 'TRectangle' then
-          FoundRectangle := True;
-      end;
-      Assert.IsTrue(FoundCircle, 'Should find TCircle as descendant of TShape');
-      Assert.IsTrue(FoundRectangle, 'Should find TRectangle as descendant of TShape');
+      CircleNode := FindNodeInTree(Descendants, 'TCircle');
+      RectNode := FindNodeInTree(Descendants, 'TRectangle');
+      Assert.IsNotNull(CircleNode, 'Should find TCircle as descendant of TShape');
+      Assert.IsNotNull(RectNode, 'Should find TRectangle as descendant of TShape');
     finally
       Result.Free;
     end;
@@ -147,8 +157,9 @@ var
   Result: TJSONValue;
   Obj: TJSONObject;
   Descendants: TJSONArray;
-  FoundAnimal, FoundDog, FoundCat: Boolean;
-  I: Integer;
+  AnimalNode: TJSONObject;
+  AnimalChildren: TJSONArray;
+  DogNode, CatNode: TJSONObject;
 begin
   Params := TJSONObject.Create;
   Params.AddPair('type_name', 'IAnimal');
@@ -164,22 +175,24 @@ begin
       Descendants := Obj.GetValue<TJSONArray>('descendants');
       Assert.IsNotNull(Descendants, 'Descendants should be an array');
 
-      // Should find TAnimal (implements directly) and TDog/TCat (transitively)
-      FoundAnimal := False;
-      FoundDog := False;
-      FoundCat := False;
-      for I := 0 to Descendants.Count - 1 do
-      begin
-        if Descendants[I].GetValue<string>('name') = 'TAnimal' then
-          FoundAnimal := True;
-        if Descendants[I].GetValue<string>('name') = 'TDog' then
-          FoundDog := True;
-        if Descendants[I].GetValue<string>('name') = 'TCat' then
-          FoundCat := True;
-      end;
-      Assert.IsTrue(FoundAnimal, 'Should find TAnimal as implementor of IAnimal');
-      Assert.IsTrue(FoundDog, 'Should find TDog transitively through TAnimal');
-      Assert.IsTrue(FoundCat, 'Should find TCat transitively through TAnimal');
+      // TAnimal should be at root level (direct child of IAnimal)
+      AnimalNode := FindNodeInTree(Descendants, 'TAnimal');
+      Assert.IsNotNull(AnimalNode, 'Should find TAnimal as implementor of IAnimal');
+      Assert.AreEqual(1, AnimalNode.GetValue<Integer>('depth'), 'TAnimal should be at depth 1');
+
+      // TDog and TCat should be NESTED inside TAnimal's descendants
+      AnimalChildren := AnimalNode.GetValue<TJSONArray>('descendants');
+      Assert.IsNotNull(AnimalChildren, 'TAnimal should have descendants array');
+
+      DogNode := FindNodeInTree(AnimalChildren, 'TDog');
+      CatNode := FindNodeInTree(AnimalChildren, 'TCat');
+      Assert.IsNotNull(DogNode, 'Should find TDog nested under TAnimal');
+      Assert.IsNotNull(CatNode, 'Should find TCat nested under TAnimal');
+      Assert.AreEqual(2, DogNode.GetValue<Integer>('depth'), 'TDog should be at depth 2');
+      Assert.AreEqual(2, CatNode.GetValue<Integer>('depth'), 'TCat should be at depth 2');
+
+      // Total count should be 3
+      Assert.AreEqual(3, Obj.GetValue<Integer>('count'), 'Total count should be 3');
     finally
       Result.Free;
     end;
@@ -194,8 +207,7 @@ var
   Result: TJSONValue;
   Obj: TJSONObject;
   Descendants: TJSONArray;
-  FoundAnimal, FoundDog, FoundCat: Boolean;
-  I: Integer;
+  AnimalNode: TJSONObject;
 begin
   Params := TJSONObject.Create;
   Params.AddPair('type_name', 'IAnimal');
@@ -212,21 +224,12 @@ begin
       Assert.IsNotNull(Descendants, 'Descendants should be an array');
 
       // With max_depth=1, should only find TAnimal (direct implementor)
-      FoundAnimal := False;
-      FoundDog := False;
-      FoundCat := False;
-      for I := 0 to Descendants.Count - 1 do
-      begin
-        if Descendants[I].GetValue<string>('name') = 'TAnimal' then
-          FoundAnimal := True;
-        if Descendants[I].GetValue<string>('name') = 'TDog' then
-          FoundDog := True;
-        if Descendants[I].GetValue<string>('name') = 'TCat' then
-          FoundCat := True;
-      end;
-      Assert.IsTrue(FoundAnimal, 'Should find TAnimal as direct implementor of IAnimal');
-      Assert.IsFalse(FoundDog, 'Should NOT find TDog with max_depth=1');
-      Assert.IsFalse(FoundCat, 'Should NOT find TCat with max_depth=1');
+      AnimalNode := FindNodeInTree(Descendants, 'TAnimal');
+      Assert.IsNotNull(AnimalNode, 'Should find TAnimal as direct implementor of IAnimal');
+
+      // TDog and TCat should NOT appear anywhere in the tree
+      Assert.IsNull(FindNodeInTree(Descendants, 'TDog'), 'Should NOT find TDog with max_depth=1');
+      Assert.IsNull(FindNodeInTree(Descendants, 'TCat'), 'Should NOT find TCat with max_depth=1');
     finally
       Result.Free;
     end;

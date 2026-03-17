@@ -54,6 +54,7 @@ uses
       Line: Integer;
       Depth: Integer;
       Kind: string;
+      Parent: string;
     end;
 
     TSymbolMatch = record
@@ -1996,6 +1997,7 @@ var
   Info: TDescendantInfo;
   Queue: TQueue<TPair<string, Integer>>;
   Visited: TDictionary<string, Boolean>;
+  DisplayNames: TDictionary<string, string>;
   Current: TPair<string, Integer>;
   Children: TList<TDescendantInfo>;
   ChildInfo: TDescendantInfo;
@@ -2057,9 +2059,12 @@ begin
     end;
 
     // Phase 2: BFS from TypeName
+    // DisplayNames maps lowercase name -> original-case name for parent tracking
     Queue := TQueue<TPair<string, Integer>>.Create;
+    DisplayNames := TDictionary<string, string>.Create;
     try
       Queue.Enqueue(TPair<string, Integer>.Create(LowerCase(TypeName), 0));
+      DisplayNames.Add(LowerCase(TypeName), TypeName);
 
       while Queue.Count > 0 do
       begin
@@ -2068,7 +2073,7 @@ begin
           Continue;
         Visited.Add(Current.Key, True);
 
-        // Skip if we've reached max depth (but still add to results)
+        // Skip if we've reached max depth
         if (Current.Value > MaxDepth) and (MaxDepth < 100) then
           Continue;
 
@@ -2078,10 +2083,15 @@ begin
           begin
             if not Visited.ContainsKey(LowerCase(ChildInfo.Name)) then
             begin
-              // Add to results with depth
+              // Add to results with depth and parent
               SetLength(Result, Length(Result) + 1);
               Result[High(Result)] := ChildInfo;
               Result[High(Result)].Depth := Current.Value + 1;
+              Result[High(Result)].Parent := DisplayNames[Current.Key];
+
+              // Track display name for this child
+              if not DisplayNames.ContainsKey(LowerCase(ChildInfo.Name)) then
+                DisplayNames.Add(LowerCase(ChildInfo.Name), ChildInfo.Name);
 
               // Enqueue children if within depth
               if Current.Value + 1 < MaxDepth then
@@ -2092,6 +2102,7 @@ begin
       end;
     finally
       Queue.Free;
+      DisplayNames.Free;
     end;
   finally
     // Free all child lists

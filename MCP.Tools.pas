@@ -233,7 +233,7 @@ begin
   Props.AddPair('max_depth', MakeIntProp('Max depth to recurse. 1=direct children only, 0=unlimited. Default 0.', 0));
   Result.Add(MakeTool('find_descendants',
     'Find all types that inherit from a given type across all parsed files. ' +
-    'The downward counterpart to resolve_inheritance. Returns descendants with depth info.',
+    'The downward counterpart to resolve_inheritance. Returns a nested tree where each node has a "descendants" array.',
     MakeInputSchema(Props, ['type_name'])));
 
   // 17. search_symbols
@@ -1406,9 +1406,11 @@ var
   MaxDepth: Integer;
   AllTrees: TArray<TPair<string, TSyntaxNode>>;
   Descendants: TArray<TDescendantInfo>;
-  Arr: TJSONArray;
+  RootArr: TJSONArray;
   Info: TDescendantInfo;
   Obj, ResultObj: TJSONObject;
+  NodeMap: TDictionary<string, TJSONObject>;
+  ParentObj: TJSONObject;
 begin
   TypeName := GetStr(Params, 'type_name');
   MaxDepth := GetInt(Params, 'max_depth', 0);
@@ -1416,21 +1418,37 @@ begin
   AllTrees := FParser.GetAllTrees;
   Descendants := FindDescendants(AllTrees, TypeName, MaxDepth);
 
-  Arr := TJSONArray.Create;
-  for Info in Descendants do
-  begin
-    Obj := TJSONObject.Create;
-    Obj.AddPair('name', Info.Name);
-    Obj.AddPair('file', Info.FileName);
-    Obj.AddPair('line', TJSONNumber.Create(Info.Line));
-    Obj.AddPair('depth', TJSONNumber.Create(Info.Depth));
-    Obj.AddPair('kind', Info.Kind);
-    Arr.Add(Obj);
+  RootArr := TJSONArray.Create;
+  NodeMap := TDictionary<string, TJSONObject>.Create;
+  try
+    // BFS order guarantees parents appear before children
+    for Info in Descendants do
+    begin
+      Obj := TJSONObject.Create;
+      Obj.AddPair('name', Info.Name);
+      Obj.AddPair('file', Info.FileName);
+      Obj.AddPair('line', TJSONNumber.Create(Info.Line));
+      Obj.AddPair('depth', TJSONNumber.Create(Info.Depth));
+      Obj.AddPair('kind', Info.Kind);
+      Obj.AddPair('descendants', TJSONArray.Create);
+
+      // Place under parent or at root
+      if SameText(Info.Parent, TypeName) then
+        RootArr.Add(Obj)
+      else if NodeMap.TryGetValue(LowerCase(Info.Parent), ParentObj) then
+        (ParentObj.GetValue('descendants') as TJSONArray).Add(Obj)
+      else
+        RootArr.Add(Obj); // fallback: shouldn't happen
+
+      NodeMap.AddOrSetValue(LowerCase(Info.Name), Obj);
+    end;
+  finally
+    NodeMap.Free;
   end;
 
   ResultObj := TJSONObject.Create;
   ResultObj.AddPair('type_name', TypeName);
-  ResultObj.AddPair('descendants', Arr);
+  ResultObj.AddPair('descendants', RootArr);
   ResultObj.AddPair('count', TJSONNumber.Create(Length(Descendants)));
   Result := ResultObj;
 end;
