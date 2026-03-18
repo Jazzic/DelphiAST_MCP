@@ -97,9 +97,9 @@ begin
     Arr := TJSONArray(Result);
 
     // With dependency-driven parsing, list_files returns only files referenced by the DPR
-    // TestProject.dpr references: Animals, Dog, Cat, AnimalRegistry, Shapes (5 .pas + 1 .dpr = 6)
+    // TestProject.dpr references: Animals, Dog, Cat, AnimalRegistry, Shapes, TestForwardDecl (6 .pas + 1 .dpr = 7)
     // test-lib files are NOT included because nothing in test-project references them
-    Assert.AreEqual(6, Arr.Count, 'Should have exactly 6 files (TestProject.dpr + 5 .pas)');
+    Assert.AreEqual(7, Arr.Count, 'Should have exactly 7 files (TestProject.dpr + 6 .pas)');
 
     // Check that all project files are present
     var FoundAnimals := False;
@@ -107,6 +107,7 @@ begin
     var FoundCat := False;
     var FoundShapes := False;
     var FoundAnimalRegistry := False;
+    var FoundTestForwardDecl := False;
     var FoundTestProjectDpr := False;
     for var I := 0 to Arr.Count - 1 do
     begin
@@ -115,6 +116,7 @@ begin
       if Arr.Items[I].Value = 'Cat.pas' then FoundCat := True;
       if Arr.Items[I].Value = 'Shapes.pas' then FoundShapes := True;
       if Arr.Items[I].Value = 'AnimalRegistry.pas' then FoundAnimalRegistry := True;
+      if Arr.Items[I].Value = 'TestForwardDecl.pas' then FoundTestForwardDecl := True;
       if Arr.Items[I].Value = 'TestProject.dpr' then FoundTestProjectDpr := True;
     end;
     Assert.IsTrue(FoundAnimals, 'Should contain Animals.pas');
@@ -122,6 +124,7 @@ begin
     Assert.IsTrue(FoundCat, 'Should contain Cat.pas');
     Assert.IsTrue(FoundShapes, 'Should contain Shapes.pas');
     Assert.IsTrue(FoundAnimalRegistry, 'Should contain AnimalRegistry.pas');
+    Assert.IsTrue(FoundTestForwardDecl, 'Should contain TestForwardDecl.pas');
     Assert.IsTrue(FoundTestProjectDpr, 'Should contain TestProject.dpr');
   finally
     Result.Free;
@@ -193,13 +196,13 @@ begin
   until GetTickCount - StartTick > 15000;
   Assert.IsTrue(Ready, 'Did not become ready after second set_project within 15000ms');
 
-  // Verify ListFiles returns 6 files
+  // Verify ListFiles returns 7 files
   Result := FTools.DoListFiles(TJSONObject.Create);
   try
     Assert.IsNotNull(Result, 'Result is nil');
     Assert.IsTrue(Result is TJSONArray, 'Result is not TJSONArray');
     Arr := TJSONArray(Result);
-    Assert.AreEqual(6, Arr.Count, 'Should have exactly 6 files after second set_project');
+    Assert.AreEqual(7, Arr.Count, 'Should have exactly 7 files after second set_project');
   finally
     Result.Free;
   end;
@@ -257,13 +260,13 @@ begin
   until GetTickCount - StartTick > 15000;
   Assert.IsTrue(Ready, 'Did not become ready within 15000ms');
 
-  // Verify ListFiles returns 6 files
+  // Verify ListFiles returns 7 files
   Result := FTools.DoListFiles(TJSONObject.Create);
   try
     Assert.IsNotNull(Result, 'Result is nil');
     Assert.IsTrue(Result is TJSONArray, 'Result is not TJSONArray');
     Arr := TJSONArray(Result);
-    Assert.AreEqual(6, Arr.Count, 'Should have exactly 6 files after rapid double set_project');
+    Assert.AreEqual(7, Arr.Count, 'Should have exactly 7 files after rapid double set_project');
   finally
     Result.Free;
   end;

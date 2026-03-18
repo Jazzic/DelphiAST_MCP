@@ -83,7 +83,7 @@ begin
       Assert.IsNotNull(Result, 'Result should not be null');
       Assert.IsTrue(Result is TJSONArray, 'Result should be TJSONArray');
       Arr := TJSONArray(Result);
-      Assert.AreEqual(6, Arr.Count, 'Should have 6 files');
+      Assert.AreEqual(7, Arr.Count, 'Should have 7 files');
 
       // Check all expected files are present
       Assert.IsTrue(ArrayContainsValue(Arr, 'Animals.pas'), 'Should contain Animals.pas');
@@ -91,6 +91,7 @@ begin
       Assert.IsTrue(ArrayContainsValue(Arr, 'Cat.pas'), 'Should contain Cat.pas');
       Assert.IsTrue(ArrayContainsValue(Arr, 'AnimalRegistry.pas'), 'Should contain AnimalRegistry.pas');
       Assert.IsTrue(ArrayContainsValue(Arr, 'Shapes.pas'), 'Should contain Shapes.pas');
+      Assert.IsTrue(ArrayContainsValue(Arr, 'TestForwardDecl.pas'), 'Should contain TestForwardDecl.pas');
       Assert.IsTrue(ArrayContainsValue(Arr, 'TestProject.dpr'), 'Should contain TestProject.dpr');
     finally
       Result.Free;

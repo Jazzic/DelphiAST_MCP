@@ -48,6 +48,7 @@ uses
   Tests.DirectTools.SetProject in 'Tests.DirectTools.SetProject.pas',
   Tests.DirectTools.FindDescendants in 'Tests.DirectTools.FindDescendants.pas',
   Tests.DirectTools.SearchSymbols in 'Tests.DirectTools.SearchSymbols.pas',
+  Tests.DirectTools.ForwardDecl in 'Tests.DirectTools.ForwardDecl.pas',
   AST.Parser in '..\AST.Parser.pas',
   MCP.Tools in '..\MCP.Tools.pas',
   AST.Watcher in '..\AST.Watcher.pas',

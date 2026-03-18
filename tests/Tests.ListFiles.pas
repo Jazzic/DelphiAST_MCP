@@ -10,7 +10,7 @@ type
   TListFilesTests = class
   public
     [Test]
-    procedure NoFilter_Returns6Files;
+    procedure NoFilter_Returns7Files;
     [Test]
     procedure FilterDog_ReturnsDogOnly;
     [Test]
@@ -22,7 +22,7 @@ implementation
 uses
   MCP.TestHelper;
 
-procedure TListFilesTests.NoFilter_Returns6Files;
+procedure TListFilesTests.NoFilter_Returns7Files;
 var
   Result: TJSONValue;
   Arr: TJSONArray;
@@ -32,12 +32,13 @@ begin
     Assert.IsNotNull(Result, 'Result is nil');
     Assert.IsTrue(Result is TJSONArray, 'Result should be a TJSONArray but was: ' + Result.ClassName);
     Arr := TJSONArray(Result);
-    TMCPTestHelper.AssertArrayLength(Arr, 6);
+    TMCPTestHelper.AssertArrayLength(Arr, 7);
     TMCPTestHelper.AssertArrayContains(Arr, 'Animals.pas');
     TMCPTestHelper.AssertArrayContains(Arr, 'Dog.pas');
     TMCPTestHelper.AssertArrayContains(Arr, 'Cat.pas');
     TMCPTestHelper.AssertArrayContains(Arr, 'AnimalRegistry.pas');
     TMCPTestHelper.AssertArrayContains(Arr, 'Shapes.pas');
+    TMCPTestHelper.AssertArrayContains(Arr, 'TestForwardDecl.pas');
     TMCPTestHelper.AssertArrayContains(Arr, 'TestProject.dpr');
   finally
     Result.Free;

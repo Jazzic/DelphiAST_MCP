@@ -129,9 +129,9 @@ begin
     Assert.IsTrue(Result is TJSONArray, 'Arr is not TJSONArray');
     Arr := Result as TJSONArray;
     // With dependency-driven parsing, list_files returns only files referenced by the DPR
-    // TestProject.dpr references: Animals, Dog, Cat, AnimalRegistry, Shapes (5 .pas files + 1 .dpr = 6)
+    // TestProject.dpr references: Animals, Dog, Cat, AnimalRegistry, Shapes, TestForwardDecl (6 .pas files + 1 .dpr = 7)
     // test-lib files are NOT included because nothing in test-project references them
-    Assert.AreEqual(6, Arr.Count, 'Should have exactly 6 files (TestProject.dpr + 5 .pas)');
+    Assert.AreEqual(7, Arr.Count, 'Should have exactly 7 files (TestProject.dpr + 6 .pas)');
 
     // Verify the test-project files are included
     var FoundAnimals := False;
@@ -139,6 +139,7 @@ begin
     var FoundCat := False;
     var FoundAnimalRegistry := False;
     var FoundShapes := False;
+    var FoundTestForwardDecl := False;
     var FoundTestProjectDpr := False;
     for var I := 0 to Arr.Count - 1 do
     begin
@@ -147,6 +148,7 @@ begin
       if Arr.Items[I].Value = 'Cat.pas' then FoundCat := True;
       if Arr.Items[I].Value = 'AnimalRegistry.pas' then FoundAnimalRegistry := True;
       if Arr.Items[I].Value = 'Shapes.pas' then FoundShapes := True;
+      if Arr.Items[I].Value = 'TestForwardDecl.pas' then FoundTestForwardDecl := True;
       if Arr.Items[I].Value = 'TestProject.dpr' then FoundTestProjectDpr := True;
     end;
     Assert.IsTrue(FoundAnimals, 'Should contain Animals.pas');
@@ -154,6 +156,7 @@ begin
     Assert.IsTrue(FoundCat, 'Should contain Cat.pas');
     Assert.IsTrue(FoundAnimalRegistry, 'Should contain AnimalRegistry.pas');
     Assert.IsTrue(FoundShapes, 'Should contain Shapes.pas');
+    Assert.IsTrue(FoundTestForwardDecl, 'Should contain TestForwardDecl.pas');
     Assert.IsTrue(FoundTestProjectDpr, 'Should contain TestProject.dpr');
   finally
     Result.Free;

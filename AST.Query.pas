@@ -71,6 +71,12 @@ uses
   { Extract ancestor type names from a type declaration }
   function ExtractAncestorNames(Tree: TSyntaxNode; const TypeName: string): TArray<string>;
 
+  { Find a type declaration, preferring full declarations over forward stubs }
+  function FindTypeDecl(Tree: TSyntaxNode; const TypeName: string): TSyntaxNode;
+
+  { Returns True if this ntTypeDecl node is a forward declaration (no body, no ancestors) }
+  function IsForwardDecl(TypeDeclNode: TSyntaxNode): Boolean;
+
   { Extract all calls made from a method implementation }
   function ExtractCallsFromMethod(Tree: TSyntaxNode; const MethodName: string): TArray<TCallInfo>;
 
@@ -755,18 +761,48 @@ begin
     SectionObj.Free;
 end;
 
+function IsForwardDecl(TypeDeclNode: TSyntaxNode): Boolean;
+var
+  TypeNode, Child: TSyntaxNode;
+begin
+  Result := True; // assume forward until we see content
+  TypeNode := TypeDeclNode.FindNode(ntType);
+  if TypeNode = nil then
+    Exit; // no ntType child at all — definitely a stub
+  for Child in TypeNode.ChildNodes do
+  begin
+    if (Child.Typ = ntType) or
+       (Child.Typ in [ntPublic, ntPrivate, ntProtected, ntPublished,
+                      ntStrictPrivate, ntStrictProtected]) then
+    begin
+      Result := False; // found a real body element — not a forward decl
+      Exit;
+    end;
+  end;
+end;
+
 function FindTypeDecl(Tree: TSyntaxNode; const TypeName: string): TSyntaxNode;
 var
   TypeDecls: TList<TSyntaxNode>;
   N: TSyntaxNode;
+  FirstMatch: TSyntaxNode;
 begin
   Result := nil;
   TypeDecls := TList<TSyntaxNode>.Create;
   try
     CollectNodes(Tree, ntTypeDecl, TypeDecls);
+    FirstMatch := nil;
     for N in TypeDecls do
+    begin
       if SameText(NodeName(N), TypeName) then
-        Exit(N);
+      begin
+        if FirstMatch = nil then
+          FirstMatch := N;          // remember first match (may be forward stub)
+        if not IsForwardDecl(N) then
+          Exit(N);                  // found the full declaration — return it immediately
+      end;
+    end;
+    Result := FirstMatch;           // only found a forward stub (or nothing)
   finally
     TypeDecls.Free;
   end;
@@ -774,11 +810,11 @@ end;
 
 function ExtractTypeDetail(Tree: TSyntaxNode; const TypeName: string): TJSONObject;
 var
-  TypeDecl, TypeNode, Child, AncestorNode: TSyntaxNode;
+  TypeDecl, TypeNode, Child, AncestorNode, IdChild: TSyntaxNode;
   Sections: TJSONObject;
   Ancestors: TJSONArray;
   AncChild: TSyntaxNode;
-  TypeKind: string;
+  TypeKind, Name: string;
 begin
   TypeDecl := FindTypeDecl(Tree, TypeName);
   if TypeDecl = nil then
@@ -827,8 +863,24 @@ begin
       if AncChild.Typ = ntType then
       begin
         AncestorNode := AncChild;
-        if NodeName(AncestorNode) <> '' then
-          Ancestors.Add(NodeName(AncestorNode));
+        Name := NodeName(AncestorNode);
+        // Fallback: check anType attribute if NodeName fails
+        if Name = '' then
+          Name := AncestorNode.GetAttribute(anType);
+        // Fallback: look for ntIdentifier child node
+        if Name = '' then
+        begin
+          for IdChild in AncChild.ChildNodes do
+          begin
+            if IdChild.Typ = ntIdentifier then
+            begin
+              Name := NodeName(IdChild);
+              Break;
+            end;
+          end;
+        end;
+        if Name <> '' then
+          Ancestors.Add(Name);
       end;
     end;
     if Ancestors.Count > 0 then
@@ -1455,8 +1507,16 @@ begin
       Exit('read');
     ntDot:
       Exit('member_access');
-    ntTypeDecl, ntType:
+    ntTypeDecl:
       Exit('type_ref');
+    ntType:
+      begin
+        // ntType child whose parent is also ntType (under ntTypeDecl) = ancestor reference
+        // e.g., in "TDog = class(TAnimal)", the ntType for "TAnimal" has parent ntType (the class spec)
+        if (P.ParentNode <> nil) and (P.ParentNode.Typ = ntTypeDecl) then
+          Exit('ancestor');
+        Exit('type_ref');
+      end;
     ntMethod:
       begin
         // If this is the method name node itself, it's a declaration
@@ -1570,6 +1630,24 @@ var
         Obj.AddPair('file', FileName);
         Result.Add(Obj);
       end;
+    end
+    else if Node.Typ = ntType then
+    begin
+      // Ancestor type references: "TAnimal" in "TDog = class(TAnimal)"
+      // These are ntType children of the outer ntType node.
+      Name := NodeName(Node);
+      if SameText(Name, IdentName) then
+      begin
+        Context := ClassifyUsageContext(Node);
+
+        Obj := TJSONObject.Create;
+        Obj.AddPair('name', Name);
+        Obj.AddPair('line', TJSONNumber.Create(Node.Line));
+        Obj.AddPair('col', TJSONNumber.Create(Node.Col));
+        Obj.AddPair('context', Context);
+        Obj.AddPair('file', FileName);
+        Result.Add(Obj);
+      end;
     end;
 
     for Child in Node.ChildNodes do
@@ -1585,10 +1663,27 @@ end;
 { ----- LocateSymbol ----- }
 
 function GetNodeEndLine(Node: TSyntaxNode): Integer;
+var
+  StmtsNode: TSyntaxNode;
 begin
   if Node is TCompoundSyntaxNode then
   begin
     Result := TCompoundSyntaxNode(Node).EndLine;
+
+    // For method nodes, the method-level EndLine can extend past the actual
+    // end; into blank lines or the next method signature. Use the ntStatements
+    // child's EndLine instead — it ends at the closing 'end;'.
+    if (Node.Typ = ntMethod) and (Result > 0) then
+    begin
+      StmtsNode := Node.FindNode(ntStatements);
+      if (StmtsNode <> nil) and (StmtsNode is TCompoundSyntaxNode) then
+      begin
+        var StmtsEnd := TCompoundSyntaxNode(StmtsNode).EndLine;
+        if (StmtsEnd > 0) and (StmtsEnd < Result) then
+          Result := StmtsEnd;
+      end;
+    end;
+
     if Result > 0 then
       Exit;
   end;
@@ -1808,7 +1903,7 @@ end;
 
 function ExtractAncestorNames(Tree: TSyntaxNode; const TypeName: string): TArray<string>;
 var
-  TypeDecl, TypeNode, AncChild: TSyntaxNode;
+  TypeDecl, TypeNode, AncChild, IdChild: TSyntaxNode;
   List: TList<string>;
   Name: string;
 begin
@@ -1827,6 +1922,21 @@ begin
       if AncChild.Typ = ntType then
       begin
         Name := NodeName(AncChild);
+        // Fallback: check anType attribute if NodeName fails
+        if Name = '' then
+          Name := AncChild.GetAttribute(anType);
+        // Fallback: look for ntIdentifier child node
+        if Name = '' then
+        begin
+          for IdChild in AncChild.ChildNodes do
+          begin
+            if IdChild.Typ = ntIdentifier then
+            begin
+              Name := NodeName(IdChild);
+              Break;
+            end;
+          end;
+        end;
         if Name <> '' then
           List.Add(Name);
       end;
@@ -1960,6 +2070,10 @@ begin
     CollectNodes(StmtsNode, ntDot, DotNodes);
     for N in DotNodes do
     begin
+      // Skip ntDot nodes that are children of ntCall — already captured in first pass
+      if (N.ParentNode <> nil) and (N.ParentNode.Typ = ntCall) then
+        Continue;
+
       CalledExpr := ExprToSource(N);
       if CalledExpr = '' then
         Continue;

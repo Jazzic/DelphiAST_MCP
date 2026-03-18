@@ -5,7 +5,8 @@ uses
   Dog,
   Cat,
   AnimalRegistry,
-  Shapes;
+  Shapes,
+  TestForwardDecl;
 
 begin
 end.

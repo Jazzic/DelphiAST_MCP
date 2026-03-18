@@ -101,7 +101,7 @@ begin
       Assert.IsNotNull(Result, 'Result should not be null');
       Assert.IsTrue(Result is TJSONArray, 'Result should be TJSONArray when no file specified');
       Arr := TJSONArray(Result);
-      Assert.AreEqual(6, Arr.Count, 'Should have 6 units');
+      Assert.AreEqual(7, Arr.Count, 'Should have 7 units');
 
       // Check each unit has expected fields
       for I := 0 to Arr.Count - 1 do
@@ -286,7 +286,7 @@ begin
       Assert.IsNotNull(Result, 'Result should not be null');
       Assert.IsTrue(Result is TJSONArray, 'Result should be TJSONArray');
       Arr := TJSONArray(Result);
-      Assert.AreEqual(6, Arr.Count, 'Should have 6 units');
+      Assert.AreEqual(7, Arr.Count, 'Should have 7 units');
     finally
       Result.Free;
     end;
