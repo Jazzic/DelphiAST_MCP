@@ -911,6 +911,24 @@ var
           for AncName in Ancestors do
             ResolveType(AncName, Depth + 1);
 
+          // If class type with no detected ancestors and not TObject itself,
+          // it implicitly inherits from TObject
+          if Length(Ancestors) = 0 then
+          begin
+            var KindVal: TJSONValue;
+            KindVal := Detail.FindValue('kind');
+            if (KindVal <> nil) and SameText(KindVal.Value, 'class') and
+               not SameText(ATypeName, 'TObject') then
+            begin
+              var ImplicitStub := TJSONObject.Create;
+              ImplicitStub.AddPair('name', 'TObject');
+              ImplicitStub.AddPair('resolved', TJSONBool.Create(False));
+              ImplicitStub.AddPair('implicit', TJSONBool.Create(True));
+              Chain.Add(ImplicitStub);
+              Complete := False;
+            end;
+          end;
+
           Break;
         end
         else
@@ -996,12 +1014,17 @@ var
   ResultObj: TJSONObject;
 
   function FindMethodFile(const AMethodName: string; out FoundFile: string;
-    out FoundTree: TSyntaxNode): Boolean;
+    out FoundTree: TSyntaxNode; const PreferredFile: string = ''): Boolean;
   var
     Pair: TPair<string, TSyntaxNode>;
     Body: TJSONObject;
+    FirstFile: string;
+    FirstTree: TSyntaxNode;
+    HaveFirst: Boolean;
   begin
     Result := False;
+    HaveFirst := False;
+
     for Pair in AllTrees do
     begin
       try
@@ -1011,15 +1034,34 @@ var
              (Body.FindValue('name').Value <> '') and
              (Body.FindValue('error') = nil) then
           begin
-            FoundFile := Pair.Key;
-            FoundTree := Pair.Value;
-            Exit(True);
+            // If this is the preferred file, return immediately
+            if (PreferredFile <> '') and SameText(Pair.Key, PreferredFile) then
+            begin
+              FoundFile := Pair.Key;
+              FoundTree := Pair.Value;
+              Exit(True);
+            end;
+            // Otherwise remember the first match
+            if not HaveFirst then
+            begin
+              FirstFile := Pair.Key;
+              FirstTree := Pair.Value;
+              HaveFirst := True;
+            end;
           end;
         finally
           Body.Free;
         end;
       except
       end;
+    end;
+
+    // Return first match if preferred file didn't match
+    if HaveFirst then
+    begin
+      FoundFile := FirstFile;
+      FoundTree := FirstTree;
+      Result := True;
     end;
   end;
 
@@ -1048,8 +1090,12 @@ var
       CallObj.AddPair('name', CI.CalledName);
       CallObj.AddPair('line', TJSONNumber.Create(CI.Line));
 
-      // Try to resolve the call target
-      if FindMethodFile(CI.SimpleName, ResolvedFile, ResolvedTree) then
+      // Try to resolve the call target - try qualified name first, then simple name
+      // Pass FoundFile as preferred file to resolve to same file first
+      if (CI.CalledName <> CI.SimpleName) and
+         FindMethodFile(CI.CalledName, ResolvedFile, ResolvedTree, FoundFile) then
+        CallObj.AddPair('resolved_in', ResolvedFile)
+      else if FindMethodFile(CI.SimpleName, ResolvedFile, ResolvedTree, FoundFile) then
         CallObj.AddPair('resolved_in', ResolvedFile)
       else
         CallObj.AddPair('resolved', TJSONBool.Create(False));
@@ -1059,7 +1105,8 @@ var
       // Recurse if depth allows
       if (CurrentDepth < Depth) and (Visited.IndexOf(LowerCase(CI.SimpleName)) < 0) then
       begin
-        if FindMethodFile(CI.SimpleName, ResolvedFile, ResolvedTree) then
+        if ((CI.CalledName <> CI.SimpleName) and FindMethodFile(CI.CalledName, ResolvedFile, ResolvedTree, FoundFile)) or
+           FindMethodFile(CI.SimpleName, ResolvedFile, ResolvedTree, FoundFile) then
         begin
           var SubCalls := TJSONArray.Create;
           CollectCallees(CI.SimpleName, CurrentDepth + 1, Visited, SubCalls);

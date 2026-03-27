@@ -25,6 +25,8 @@ type
     [Test] procedure Speak_Found;
     [Test] procedure FBreed_DogFile;
     [Test] procedure NonExistent_Empty;
+    [Test] procedure TAnimal_IncludesAncestorInDog;
+    [Test] procedure TShape_IncludesAncestorsInShapes;
   end;
 
 implementation
@@ -162,6 +164,81 @@ begin
       Assert.IsTrue(Result is TJSONArray, 'Result should be TJSONArray');
       Arr := TJSONArray(Result);
       Assert.AreEqual(0, Arr.Count, 'Should find no usages of NonExistentXYZ');
+    finally
+      Result.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+end;
+
+procedure TDirectToolsFindUsagesTests.TAnimal_IncludesAncestorInDog;
+var
+  Params: TJSONObject;
+  Result: TJSONValue;
+  Arr: TJSONArray;
+  I: Integer;
+  Item: TJSONObject;
+  FoundAncestor: Boolean;
+begin
+  Params := TJSONObject.Create;
+  Params.AddPair('name', 'TAnimal');
+  try
+    Result := FTools.DoFindUsages(Params);
+    try
+      Assert.IsNotNull(Result, 'Result should not be null');
+      Assert.IsTrue(Result is TJSONArray, 'Result should be TJSONArray');
+      Arr := TJSONArray(Result);
+      Assert.IsTrue(Arr.Count > 0, 'Should find usages of TAnimal');
+
+      // Check that at least one usage has context='ancestor'
+      FoundAncestor := False;
+      for I := 0 to Arr.Count - 1 do
+      begin
+        Item := Arr.Items[I] as TJSONObject;
+        if Item.GetValue<string>('context', '') = 'ancestor' then
+        begin
+          FoundAncestor := True;
+          Break;
+        end;
+      end;
+      Assert.IsTrue(FoundAncestor,
+        'Should find at least one ancestor usage of TAnimal (e.g., TDog = class(TAnimal))');
+    finally
+      Result.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+end;
+
+procedure TDirectToolsFindUsagesTests.TShape_IncludesAncestorsInShapes;
+var
+  Params: TJSONObject;
+  Result: TJSONValue;
+  Arr: TJSONArray;
+  I, AncestorCount: Integer;
+  Item: TJSONObject;
+begin
+  Params := TJSONObject.Create;
+  Params.AddPair('name', 'TShape');
+  try
+    Result := FTools.DoFindUsages(Params);
+    try
+      Assert.IsNotNull(Result, 'Result should not be null');
+      Assert.IsTrue(Result is TJSONArray, 'Result should be TJSONArray');
+      Arr := TJSONArray(Result);
+
+      // Count ancestor usages -- TCircle and TRectangle both inherit from TShape
+      AncestorCount := 0;
+      for I := 0 to Arr.Count - 1 do
+      begin
+        Item := Arr.Items[I] as TJSONObject;
+        if Item.GetValue<string>('context', '') = 'ancestor' then
+          Inc(AncestorCount);
+      end;
+      Assert.IsTrue(AncestorCount >= 2,
+        Format('Should find at least 2 ancestor usages of TShape (TCircle, TRectangle), found %d', [AncestorCount]));
     finally
       Result.Free;
     end;

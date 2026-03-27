@@ -26,6 +26,9 @@ type
     [Test] procedure TAnimal_Found;
     [Test] procedure NonExistent_ReturnsError;
     [Test] procedure MaxDepth_Limits;
+    [Test] procedure TDog_ChainHasDepthAtLeast2;
+    [Test] procedure TCircle_ChainIncludesTShape;
+    [Test] procedure TAnimalRegistry_CompleteFalse;
   end;
 
 implementation
@@ -198,6 +201,113 @@ begin
 
       Assert.IsNull(Obj.Get('error'), 'Should not have error: ' + Obj.ToString);
       Assert.IsNotNull(Obj.Get('depth'), 'Should have depth');
+    finally
+      Result.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+end;
+
+procedure TDirectToolsResolveInheritanceTests.TDog_ChainHasDepthAtLeast2;
+var
+  Params: TJSONObject;
+  Result: TJSONValue;
+  Obj: TJSONObject;
+  Chain: TJSONArray;
+  Depth: Integer;
+begin
+  Params := TJSONObject.Create;
+  Params.AddPair('type_name', 'TDog');
+  try
+    Result := FTools.DoResolveInheritance(Params);
+    try
+      Obj := TJSONObject(Result);
+      Assert.IsNull(Obj.Get('error'), 'Should not have error: ' + Obj.ToString);
+
+      Chain := Obj.GetValue<TJSONArray>('chain');
+      Depth := Obj.GetValue<Integer>('depth');
+
+      // TDog -> TAnimal -> ... so chain depth should be >= 2
+      Assert.IsTrue(Depth >= 2,
+        Format('TDog chain depth should be >= 2, was %d', [Depth]));
+
+      // Second item should be TAnimal
+      Assert.AreEqual('TAnimal',
+        (Chain.Items[1] as TJSONObject).GetValue<string>('name'),
+        'Second chain item should be TAnimal');
+    finally
+      Result.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+end;
+
+procedure TDirectToolsResolveInheritanceTests.TCircle_ChainIncludesTShape;
+var
+  Params: TJSONObject;
+  Result: TJSONValue;
+  Obj: TJSONObject;
+  Chain: TJSONArray;
+  I: Integer;
+  FoundTShape: Boolean;
+begin
+  Params := TJSONObject.Create;
+  Params.AddPair('type_name', 'TCircle');
+  try
+    Result := FTools.DoResolveInheritance(Params);
+    try
+      Obj := TJSONObject(Result);
+      Assert.IsNull(Obj.Get('error'), 'Should not have error: ' + Obj.ToString);
+
+      Chain := Obj.GetValue<TJSONArray>('chain');
+
+      // Chain should include TShape somewhere
+      FoundTShape := False;
+      for I := 0 to Chain.Count - 1 do
+      begin
+        if (Chain.Items[I] as TJSONObject).GetValue<string>('name', '') = 'TShape' then
+        begin
+          FoundTShape := True;
+          Break;
+        end;
+      end;
+      Assert.IsTrue(FoundTShape, 'TCircle chain should include TShape');
+    finally
+      Result.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+end;
+
+procedure TDirectToolsResolveInheritanceTests.TAnimalRegistry_CompleteFalse;
+var
+  Params: TJSONObject;
+  Result: TJSONValue;
+  Obj: TJSONObject;
+  Chain: TJSONArray;
+  Complete: Boolean;
+begin
+  Params := TJSONObject.Create;
+  Params.AddPair('type_name', 'TAnimalRegistry');
+  try
+    Result := FTools.DoResolveInheritance(Params);
+    try
+      Obj := TJSONObject(Result);
+      Assert.IsNull(Obj.Get('error'), 'Should not have error: ' + Obj.ToString);
+
+      Chain := Obj.GetValue<TJSONArray>('chain');
+      Complete := Obj.GetValue<Boolean>('complete');
+
+      // TAnimalRegistry has no explicit ancestor -- it implicitly inherits TObject
+      // Chain should have at least 2 items (TAnimalRegistry + TObject stub)
+      Assert.IsTrue(Chain.Count >= 2,
+        Format('Chain should have >= 2 items for implicit TObject, had %d', [Chain.Count]));
+
+      // complete should be false since TObject is unresolved
+      Assert.IsFalse(Complete, 'complete should be False (TObject is not in project)');
     finally
       Result.Free;
     end;

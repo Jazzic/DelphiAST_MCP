@@ -24,6 +24,7 @@ type
     [Test] procedure ByLineRange_CatBody;
     [Test] procedure SymbolNotFound_ReturnsError;
     [Test] procedure MissingParams_ReturnsError;
+    [Test] procedure SymbolMode_GetBreed_NoTrailingLines;
   end;
 
 implementation
@@ -148,6 +149,44 @@ begin
       Assert.IsTrue(Result is TJSONObject, 'Result should be TJSONObject');
       Obj := TJSONObject(Result);
       Assert.IsNotNull(Obj.Get('error'), 'Should have error field');
+    finally
+      Result.Free;
+    end;
+  finally
+    Params.Free;
+  end;
+end;
+
+procedure TDirectToolsGetSourceTests.SymbolMode_GetBreed_NoTrailingLines;
+var
+  Params: TJSONObject;
+  Result: TJSONValue;
+  Obj: TJSONObject;
+  Source: string;
+  EndLine: Integer;
+begin
+  Params := TJSONObject.Create;
+  Params.AddPair('symbol', 'TDog.GetBreed');
+  Params.AddPair('file', 'Dog.pas');
+  try
+    Result := FTools.DoGetSource(Params);
+    try
+      Assert.IsNotNull(Result, 'Result should not be null');
+      Assert.IsTrue(Result is TJSONObject, 'Result should be TJSONObject');
+      Obj := TJSONObject(Result);
+
+      Assert.IsNull(Obj.Get('error'), 'Should not have error: ' + Obj.ToString);
+      Assert.IsNotNull(Obj.Get('source'), 'Should have source');
+
+      // GetBreed is lines 28-31 in Dog.pas. EndLine must not exceed 31.
+      EndLine := Obj.GetValue<Integer>('end_line');
+      Assert.IsTrue(EndLine <= 31,
+        Format('EndLine should be <= 31 (was %d) - trailing lines from next method leaked', [EndLine]));
+
+      // The source should not contain the next method's signature
+      Source := Obj.GetValue<string>('source');
+      Assert.IsFalse(Pos('function TDog.Speak', Source) > 0,
+        'Source should not contain the next method signature');
     finally
       Result.Free;
     end;

@@ -53,8 +53,10 @@ type
     FParseThread: TThread;
     FParseThreadLock: TCriticalSection;
     FCancelled: Integer;
+    FFileIndex: TDictionary<string, string>;
 
     procedure WaitForParseThread;
+    procedure BuildFileIndex;
 
     function GetProjectRoot: string;
     function ResolveUnitFile(const UnitName: string): string;
@@ -164,6 +166,7 @@ begin
   inherited Create;
   FCache := TDictionary<string, TCachedTree>.Create;
   FProjectFiles := TList<string>.Create;
+  FFileIndex := TDictionary<string, string>.Create;
   FRewalking := 0;
   FParseThreadLock := TCriticalSection.Create;
   FCancelled := 0;
@@ -227,6 +230,7 @@ begin
       Entry.Node.Free;
     FCache.Free;
     FProjectFiles.Free;
+    FFileIndex.Free;
   finally
     FLock.EndWrite;
   end;
@@ -359,12 +363,12 @@ begin
       try
         if not FCache.ContainsKey(Key) then
         begin
-          WriteLn(Output, '[delphi-ast] Adding '+key+' to cache');
+          WriteLn(ErrOutput, '[delphi-ast] Adding '+key+' to cache');
           FCache.Add(Key, Entry);
           Inc(Loaded);
         end else
         begin
-          WriteLn(Output, '[delphi-ast] '+key+' already in cache');
+          WriteLn(ErrOutput, '[delphi-ast] '+key+' already in cache');
           Entry.Node.Free; // Already loaded by another path
         end;
       finally
@@ -730,24 +734,44 @@ end;
 
 function TASTParser.ResolveUnitFile(const UnitName: string): string;
 var
-  I: Integer;
-  FullPath, SearchFile: string;
+  SearchKey: string;
 begin
-  Result := '';
+  // O(1) lookup using pre-built file index
+  SearchKey := LowerCase(UnitName + '.pas');
+  if not FFileIndex.TryGetValue(SearchKey, Result) then
+    Result := '';
+end;
 
-  // Convert unit name to file name (e.g., TestLib.Utils -> TestLib.Utils.pas)
-  SearchFile := UnitName + '.pas';
-
-  // Search in each root directory
+procedure TASTParser.BuildFileIndex;
+var
+  I: Integer;
+  Files: TArray<string>;
+  F, FileName: string;
+begin
+  FFileIndex.Clear;
   for I := 0 to High(FRoots) do
   begin
-    FullPath := TPath.Combine(FRoots[I], SearchFile);
-    if FileExists(FullPath) then
-    begin
-      Result := TPath.GetFullPath(FullPath);
-      Exit;
+    try
+      Files := TDirectory.GetFiles(FRoots[I], '*.pas');
+      for F in Files do
+      begin
+        FileName := LowerCase(ExtractFileName(F));
+        if not FFileIndex.ContainsKey(FileName) then
+          FFileIndex.Add(FileName, TPath.GetFullPath(F));
+      end;
+      Files := TDirectory.GetFiles(FRoots[I], '*.dpr');
+      for F in Files do
+      begin
+        FileName := LowerCase(ExtractFileName(F));
+        if not FFileIndex.ContainsKey(FileName) then
+          FFileIndex.Add(FileName, TPath.GetFullPath(F));
+      end;
+    except
+      on E: Exception do
+        WriteLn(ErrOutput, '[delphi-ast] BuildFileIndex error for ' + FRoots[I] + ': ' + E.Message);
     end;
   end;
+  WriteLn(ErrOutput, '[delphi-ast] File index built: ' + IntToStr(FFileIndex.Count) + ' files');
 end;
 
 procedure TASTParser.ParseProjectFiles;
@@ -762,7 +786,6 @@ var
   Parsed, Failed, Cached: Integer;
   Entry: TCachedTree;
   AlreadyCached: Boolean;
-  FileTime: TDateTime;
 begin
   // Set parsing state and reset counters
   TInterlocked.Exchange(FParseState, Integer(psParsing));
@@ -785,6 +808,9 @@ begin
 
   // Load persisted cache from disk first
   LoadPersistedCache;
+
+  // Build filename-to-path index for O(1) unit resolution
+  BuildFileIndex;
 
   // Find all DPR files in the project root (first root only)
   if Length(FRoots) = 0 then
@@ -821,7 +847,7 @@ begin
       Key := LowerCase(FullPath);
 
       try
-        WriteLn(Output, '[delphi-ast] Checking: '+key);
+        WriteLn(ErrOutput, '[delphi-ast] Checking: '+key);
         // Check if already in cache with fresh timestamp
         AlreadyCached := False;
         FLock.BeginRead;
@@ -848,11 +874,12 @@ begin
           FProjectFilesLock.EndWrite;
         end;
 
-        // Always parse to extract uses clauses (uses cached tree if fresh)
-        Tree := ParseFile(FullPath);
-
-        if not AlreadyCached then
+        // Use cached tree directly when available, otherwise parse
+        if AlreadyCached then
+          Tree := Entry.Node
+        else
         begin
+          Tree := ParseFile(FullPath);
           Inc(Parsed);
           TInterlocked.Increment(FParsedFiles);
         end;

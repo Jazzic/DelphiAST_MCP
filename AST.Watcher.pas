@@ -29,7 +29,7 @@ type
     FStopEvent: THandle;
     FWatches: TArray<TRootWatch>;
     FDebounce: TDictionary<string, TDateTime>;
-    procedure IssueRead(var Watch: TRootWatch);
+    function IssueRead(var Watch: TRootWatch): Boolean;
     procedure ProcessNotifications(var Watch: TRootWatch; BytesTransferred: DWORD);
     procedure ProcessDebounceQueue;
     function IsDelphiFile(const FileName: string): Boolean;
@@ -88,11 +88,11 @@ begin
   Result := (Ext = '.pas') or (Ext = '.dpr') or (Ext = '.dpk');
 end;
 
-procedure TDirectoryWatcher.IssueRead(var Watch: TRootWatch);
+function TDirectoryWatcher.IssueRead(var Watch: TRootWatch): Boolean;
 begin
   FillChar(Watch.Overlapped, SizeOf(TOverlapped), 0);
   Watch.Overlapped.hEvent := Watch.Event;
-  ReadDirectoryChangesW(
+  Result := ReadDirectoryChangesW(
     Watch.Handle,
     @Watch.Buffer[0],
     SizeOf(Watch.Buffer),
@@ -102,6 +102,9 @@ begin
     @Watch.Overlapped,
     nil
   );
+  if not Result then
+    WriteLn(ErrOutput, '[delphi-ast] Watcher: ReadDirectoryChangesW failed, error=' +
+      IntToStr(GetLastError) + ' for ' + Watch.Root);
 end;
 
 procedure TDirectoryWatcher.ProcessNotifications(var Watch: TRootWatch;
@@ -226,6 +229,12 @@ begin
 
     if WaitResult = WAIT_OBJECT_0 then
       Break; // Stop event signaled
+
+    if WaitResult = WAIT_FAILED then
+    begin
+      Sleep(200); // Prevent busy-loop on persistent failure
+      Continue;
+    end;
 
     if (WaitResult >= WAIT_OBJECT_0 + 1) and
        (WaitResult < WAIT_OBJECT_0 + 1 + DWORD(WatchCount)) then
