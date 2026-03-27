@@ -6,7 +6,9 @@ uses
   Cat,
   AnimalRegistry,
   Shapes,
-  TestForwardDecl;
+  TestForwardDecl,
+  Generated,
+  GeneratedSub;
 
 begin
 end.

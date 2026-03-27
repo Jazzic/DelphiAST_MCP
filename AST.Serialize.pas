@@ -412,11 +412,19 @@ class function TFullASTSerializer.LoadFromFile(const FileName: string;
   out Root: TSyntaxNode; out ModifiedAt: TDateTime;
   out SourcePath: string): Boolean;
 var
-  FS: TFileStream;
+    FS: TFileStream;
+    MS: TMemoryStream;
 begin
   FS := TFileStream.Create(FileName, fmOpenRead or fmShareDenyNone);
   try
-    Result := ReadFromStream(FS, Root, ModifiedAt, SourcePath);
+    MS := TMemoryStream.Create;
+    try
+      MS.CopyFrom(FS, 0);   // slurp entire file at once
+      MS.Position := 0;
+      Result := ReadFromStream(MS, Root, ModifiedAt, SourcePath);
+    finally
+      MS.Free;
+    end;
   finally
     FS.Free;
   end;

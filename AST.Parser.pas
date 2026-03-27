@@ -54,6 +54,7 @@ type
     FParseThreadLock: TCriticalSection;
     FCancelled: Integer;
     FFileIndex: TDictionary<string, string>;
+    FExcludeFiles: TArray<string>;
 
     procedure WaitForParseThread;
     procedure BuildFileIndex;
@@ -81,7 +82,7 @@ type
     procedure InvalidateFile(const AFullPath: string);
     function ResolveFilePath(const AFileName: string): string;
 
-    procedure Reconfigure(const ARoots: TArray<string>);
+    procedure Reconfigure(const ARoots: TArray<string>; const AExcludeFiles: TArray<string> = nil);
     function IsConfigured: Boolean;
     function IsParsing: Boolean;
     function IsReady: Boolean;
@@ -93,7 +94,7 @@ type
 implementation
 
 uses
-  System.Hash, AST.Serialize, AST.Watcher, AST.Query;
+  System.Hash, System.Masks, AST.Serialize, AST.Watcher, AST.Query;
 
 { TSimpleIncludeHandler }
 
@@ -429,7 +430,7 @@ begin
   end;
 end;
 
-procedure TASTParser.Reconfigure(const ARoots: TArray<string>);
+procedure TASTParser.Reconfigure(const ARoots: TArray<string>; const AExcludeFiles: TArray<string> = nil);
 var
   Entry: TCachedTree;
   I: Integer;
@@ -457,10 +458,11 @@ begin
     FLock.EndWrite;
   end;
 
-  // 4. Set new roots
+  // 4. Set new roots and exclusions
   SetLength(FRoots, Length(ARoots));
   for I := 0 to High(ARoots) do
     FRoots[I] := IncludeTrailingPathDelimiter(ExpandFileName(ARoots[I]));
+  FExcludeFiles := AExcludeFiles;
 
   // 5. Reinitialize
   FIncludeHandler := TSimpleIncludeHandler.Create(FRoots);
@@ -742,6 +744,16 @@ begin
     Result := '';
 end;
 
+function IsExcludedFile(const FileName: string; const Patterns: TArray<string>): Boolean;
+var
+  Pattern: string;
+begin
+  for Pattern in Patterns do
+    if MatchesMask(FileName, Pattern) then
+      Exit(True);
+  Result := False;
+end;
+
 procedure TASTParser.BuildFileIndex;
 var
   I: Integer;
@@ -756,6 +768,8 @@ begin
       for F in Files do
       begin
         FileName := LowerCase(ExtractFileName(F));
+        if IsExcludedFile(FileName, FExcludeFiles) then
+          Continue;
         if not FFileIndex.ContainsKey(FileName) then
           FFileIndex.Add(FileName, TPath.GetFullPath(F));
       end;
@@ -763,6 +777,8 @@ begin
       for F in Files do
       begin
         FileName := LowerCase(ExtractFileName(F));
+        if IsExcludedFile(FileName, FExcludeFiles) then
+          Continue;
         if not FFileIndex.ContainsKey(FileName) then
           FFileIndex.Add(FileName, TPath.GetFullPath(F));
       end;

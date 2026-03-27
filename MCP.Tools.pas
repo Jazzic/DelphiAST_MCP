@@ -1250,9 +1250,9 @@ begin
             SameText(DirName, 'bin32');
 end;
 
-function ExpandWithSubdirs(const Paths: TArray<string>): TArray<string>;
+function ExpandWithSubdirs(const Paths: TArray<string>; const CustomSkipDirs: TArray<string> = nil): TArray<string>;
 var
-  Path, Sub: string;
+  Path, Sub, CustomDir: string;
   Subs: TArray<string>;
   Skip: Boolean;
   Parts: TArray<string>;
@@ -1271,11 +1271,21 @@ begin
       Skip := False;
       Parts := Sub.Substring(Path.Length + 1).Split(['\', '/']);
       for Part in Parts do
+      begin
         if IsSkippableDir(Part) then
         begin
           Skip := True;
           Break;
         end;
+        for CustomDir in CustomSkipDirs do
+          if SameText(Part, CustomDir) then
+          begin
+            Skip := True;
+            Break;
+          end;
+        if Skip then
+          Break;
+      end;
       if not Skip then
         Result := Result + [Sub];
     end;
@@ -1290,14 +1300,15 @@ type
   end;
 var
   ProjectPath, ConfigFile, ConfigText: string;
-  ConfigJSON, LibPathsObj: TJSONValue;
-  LibPathsArr: TJSONArray;
+  ConfigJSON, LibPathsObj, ExcludePathsObj, ExcludeFilesObj: TJSONValue;
+  LibPathsArr, ExcludePathsArr, ExcludeFilesArr: TJSONArray;
   Roots: TArray<string>;
   LibPaths: TArray<TLibPathInfo>;
+  ExcludePaths, ExcludeFiles: TArray<string>;
   DPRFiles: TArray<string>;
   I: Integer;
   ResultObj, LibPathObj: TJSONObject;
-  LibPathArr: TJSONArray;
+  LibPathArr, ExcludePathsResult, ExcludeFilesResult: TJSONArray;
   DPRArr: TJSONArray;
   DPR: string;
   ConfigFound: Boolean;
@@ -1348,31 +1359,57 @@ begin
     ConfigText := TFile.ReadAllText(ConfigFile);
     ConfigJSON := TJSONObject.ParseJSONValue(ConfigText);
     try
-      if (ConfigJSON is TJSONObject) and
-         TJSONObject(ConfigJSON).TryGetValue('libraryPaths', LibPathsObj) and
-         (LibPathsObj is TJSONArray) then
+      if ConfigJSON is TJSONObject then
       begin
-        LibPathsArr := TJSONArray(LibPathsObj);
-        for I := 0 to LibPathsArr.Count - 1 do
+        if TJSONObject(ConfigJSON).TryGetValue('libraryPaths', LibPathsObj) and
+           (LibPathsObj is TJSONArray) then
         begin
-          SetLength(Roots, Length(Roots) + 1);
-          // Support both absolute paths and paths relative to the project
-          var LibPath := LibPathsArr.Items[I].Value;
-          if TPath.IsRelativePath(LibPath) then
-            LibPath := TPath.Combine(ProjectPath, LibPath);
-          var ResolvedPath := ExpandFileName(LibPath);
-          Roots[High(Roots)] := ResolvedPath;
+          LibPathsArr := TJSONArray(LibPathsObj);
+          for I := 0 to LibPathsArr.Count - 1 do
+          begin
+            SetLength(Roots, Length(Roots) + 1);
+            // Support both absolute paths and paths relative to the project
+            var LibPath := StringReplace(LibPathsArr.Items[I].Value, '/', '\', [rfReplaceAll]);
+            if TPath.IsRelativePath(LibPath) then
+              LibPath := TPath.Combine(ProjectPath, LibPath);
+            var ResolvedPath := ExpandFileName(LibPath);
+            Roots[High(Roots)] := ResolvedPath;
 
-          // Track library path with existence status
-          SetLength(LibPaths, Length(LibPaths) + 1);
-          LibPaths[High(LibPaths)].Path := ResolvedPath;
-          LibPaths[High(LibPaths)].Exists := DirectoryExists(ResolvedPath);
+            // Track library path with existence status
+            SetLength(LibPaths, Length(LibPaths) + 1);
+            LibPaths[High(LibPaths)].Path := ResolvedPath;
+            LibPaths[High(LibPaths)].Exists := DirectoryExists(ResolvedPath);
 
-          // Log library path with status
-          if LibPaths[High(LibPaths)].Exists then
-            WriteLn(ErrOutput, '[delphi-ast] Library path: ' + ResolvedPath + ' (OK)')
-          else
-            WriteLn(ErrOutput, '[delphi-ast] Library path: ' + ResolvedPath + ' (NOT FOUND)');
+            // Log library path with status
+            if LibPaths[High(LibPaths)].Exists then
+              WriteLn(ErrOutput, '[delphi-ast] Library path: ' + ResolvedPath + ' (OK)')
+            else
+              WriteLn(ErrOutput, '[delphi-ast] Library path: ' + ResolvedPath + ' (NOT FOUND)');
+          end;
+        end;
+
+        if TJSONObject(ConfigJSON).TryGetValue('excludePaths', ExcludePathsObj) and
+           (ExcludePathsObj is TJSONArray) then
+        begin
+          ExcludePathsArr := TJSONArray(ExcludePathsObj);
+          SetLength(ExcludePaths, ExcludePathsArr.Count);
+          for I := 0 to ExcludePathsArr.Count - 1 do
+          begin
+            ExcludePaths[I] := StringReplace(ExcludePathsArr.Items[I].Value, '/', '\', [rfReplaceAll]);
+            WriteLn(ErrOutput, '[delphi-ast] Exclude path: ' + ExcludePaths[I]);
+          end;
+        end;
+
+        if TJSONObject(ConfigJSON).TryGetValue('excludeFiles', ExcludeFilesObj) and
+           (ExcludeFilesObj is TJSONArray) then
+        begin
+          ExcludeFilesArr := TJSONArray(ExcludeFilesObj);
+          SetLength(ExcludeFiles, ExcludeFilesArr.Count);
+          for I := 0 to ExcludeFilesArr.Count - 1 do
+          begin
+            ExcludeFiles[I] := LowerCase(ExcludeFilesArr.Items[I].Value);
+            WriteLn(ErrOutput, '[delphi-ast] Exclude file: ' + ExcludeFiles[I]);
+          end;
         end;
       end;
     finally
@@ -1385,10 +1422,10 @@ begin
   end;
 
   // Expand each root to include all subdirectories recursively
-  Roots := ExpandWithSubdirs(Roots);
+  Roots := ExpandWithSubdirs(Roots, ExcludePaths);
 
-  // Reconfigure parser with new roots
-  FParser.Reconfigure(Roots);
+  // Reconfigure parser with new roots and file exclusions
+  FParser.Reconfigure(Roots, ExcludeFiles);
 
   // Return result
   ResultObj := TJSONObject.Create;
@@ -1416,6 +1453,18 @@ begin
     LibPathArr.Add(LibPathObj);
   end;
   ResultObj.AddPair('libraryPaths', LibPathArr);
+
+  // Include excludePaths
+  ExcludePathsResult := TJSONArray.Create;
+  for I := 0 to High(ExcludePaths) do
+    ExcludePathsResult.Add(ExcludePaths[I]);
+  ResultObj.AddPair('excludePaths', ExcludePathsResult);
+
+  // Include excludeFiles
+  ExcludeFilesResult := TJSONArray.Create;
+  for I := 0 to High(ExcludeFiles) do
+    ExcludeFilesResult.Add(ExcludeFiles[I]);
+  ResultObj.AddPair('excludeFiles', ExcludeFilesResult);
 
   Result := ResultObj;
 end;

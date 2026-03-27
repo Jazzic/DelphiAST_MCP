@@ -108,7 +108,8 @@
       "Bash(cd \"C:/Users/jespe/Documents/Embarcadero/Studio/Projects/DelphiAST_MCP\" && cmd.exe /c build-tests.bat 2>&1)",
       "Bash(cd \"C:/Users/jespe/Documents/Embarcadero/Studio/Projects/DelphiAST_MCP\" && cmd.exe /c run-tests.bat 2>&1)",
       "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\jespe\\\\Documents\\\\Embarcadero\\\\Studio\\\\Projects\\\\DelphiAST_MCP && build-tests.bat\" 2>&1; echo \"Exit: $?\")",
-      "Bash(c:\\\\Users\\\\jespe\\\\Documents\\\\Embarcadero\\\\Studio\\\\Projects\\\\DelphiAST_MCP\\\\build-tests.bat)"
+      "Bash(c:\\\\Users\\\\jespe\\\\Documents\\\\Embarcadero\\\\Studio\\\\Projects\\\\DelphiAST_MCP\\\\build-tests.bat)",
+      "Bash(find C:UsersjespeDocumentsEmbarcaderoStudioProjectsDelphiAST_MCP -type f -name *.delphi-ast.json)"
     ]
   },
   "enabledMcpjsonServers": [
