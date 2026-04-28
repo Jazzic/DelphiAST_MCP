@@ -116,10 +116,10 @@ begin
     Arr := TJSONArray(Result);
 
     // With dependency-driven parsing, list_files returns only files referenced by the DPR
-    // TestProject.dpr references: Animals, Dog, Cat, AnimalRegistry, Shapes, TestForwardDecl, Generated, GeneratedSub
-    // (8 .pas + 1 .dpr = 9)
+    // TestProject.dpr references: Animals, Dog, Cat, AnimalRegistry, Shapes, TestForwardDecl, CouplingDemo, Generated, GeneratedSub, ProceduralUnit
+    // (10 .pas + 1 .dpr = 11)
     // test-lib files are NOT included because nothing in test-project references them
-    Assert.AreEqual(9, Arr.Count, 'Should have exactly 9 files (TestProject.dpr + 8 .pas)');
+    Assert.AreEqual(11, Arr.Count, 'Should have exactly 11 files (TestProject.dpr + 10 .pas)');
 
     // Check that all project files are present
     var FoundAnimals := False;
@@ -128,8 +128,10 @@ begin
     var FoundShapes := False;
     var FoundAnimalRegistry := False;
     var FoundTestForwardDecl := False;
+    var FoundCouplingDemo := False;
     var FoundGenerated := False;
     var FoundGeneratedSub := False;
+    var FoundProceduralUnit := False;
     var FoundTestProjectDpr := False;
     for var I := 0 to Arr.Count - 1 do
     begin
@@ -139,8 +141,10 @@ begin
       if Arr.Items[I].Value = 'Shapes.pas' then FoundShapes := True;
       if Arr.Items[I].Value = 'AnimalRegistry.pas' then FoundAnimalRegistry := True;
       if Arr.Items[I].Value = 'TestForwardDecl.pas' then FoundTestForwardDecl := True;
+      if Arr.Items[I].Value = 'CouplingDemo.pas' then FoundCouplingDemo := True;
       if SameText(ExtractFileName(Arr.Items[I].Value), 'Generated.pas') then FoundGenerated := True;
       if SameText(ExtractFileName(Arr.Items[I].Value), 'GeneratedSub.pas') then FoundGeneratedSub := True;
+      if Arr.Items[I].Value = 'ProceduralUnit.pas' then FoundProceduralUnit := True;
       if Arr.Items[I].Value = 'TestProject.dpr' then FoundTestProjectDpr := True;
     end;
     Assert.IsTrue(FoundAnimals, 'Should contain Animals.pas');
@@ -149,8 +153,10 @@ begin
     Assert.IsTrue(FoundShapes, 'Should contain Shapes.pas');
     Assert.IsTrue(FoundAnimalRegistry, 'Should contain AnimalRegistry.pas');
     Assert.IsTrue(FoundTestForwardDecl, 'Should contain TestForwardDecl.pas');
+    Assert.IsTrue(FoundCouplingDemo, 'Should contain CouplingDemo.pas');
     Assert.IsTrue(FoundGenerated, 'Should contain Generated.pas');
     Assert.IsTrue(FoundGeneratedSub, 'Should contain GeneratedSub.pas');
+    Assert.IsTrue(FoundProceduralUnit, 'Should contain ProceduralUnit.pas');
     Assert.IsTrue(FoundTestProjectDpr, 'Should contain TestProject.dpr');
   finally
     Result.Free;
@@ -228,7 +234,7 @@ begin
     Assert.IsNotNull(Result, 'Result is nil');
     Assert.IsTrue(Result is TJSONArray, 'Result is not TJSONArray');
     Arr := TJSONArray(Result);
-    Assert.AreEqual(9, Arr.Count, 'Should have exactly 9 files after second set_project');
+    Assert.AreEqual(11, Arr.Count, 'Should have exactly 11 files after second set_project');
   finally
     Result.Free;
   end;
@@ -292,7 +298,7 @@ begin
     Assert.IsNotNull(Result, 'Result is nil');
     Assert.IsTrue(Result is TJSONArray, 'Result is not TJSONArray');
     Arr := TJSONArray(Result);
-    Assert.AreEqual(9, Arr.Count, 'Should have exactly 9 files after rapid double set_project');
+    Assert.AreEqual(11, Arr.Count, 'Should have exactly 11 files after rapid double set_project');
   finally
     Result.Free;
   end;
@@ -328,7 +334,7 @@ begin
     try
       Assert.IsTrue(ListResult is TJSONArray, 'list_files should return array');
       Arr := TJSONArray(ListResult);
-      Assert.AreEqual(8, Arr.Count, 'Should have 8 files (Dog.pas excluded)');
+      Assert.AreEqual(10, Arr.Count, 'Should have 10 files (Dog.pas excluded)');
       FoundDog := False;
       for var I := 0 to Arr.Count - 1 do
         if SameText(Arr.Items[I].Value, 'Dog.pas') then
@@ -383,7 +389,7 @@ begin
       Assert.IsTrue(ListResult is TJSONArray, 'list_files should return array');
       Arr := TJSONArray(ListResult);
       // Generated/ directory excluded → Generated.pas not in file index → not reachable
-      Assert.AreEqual(7, Arr.Count, 'Should have 7 files (Generated.pas excluded)');
+      Assert.AreEqual(9, Arr.Count, 'Should have 9 files (Generated.pas excluded)');
       FoundGenerated := False;
       for var I := 0 to Arr.Count - 1 do
         if SameText(ExtractFileName(Arr.Items[I].Value), 'Generated.pas') then
@@ -438,7 +444,7 @@ begin
       Arr := TJSONArray(ListResult);
       // Generated/ directory excluded → Generated.pas (in Generated/) and
       // GeneratedSub.pas (in Generated/SubDir/) must both be excluded
-      Assert.AreEqual(7, Arr.Count, 'Should have 7 files (Generated.pas and GeneratedSub.pas both excluded)');
+      Assert.AreEqual(9, Arr.Count, 'Should have 9 files (Generated.pas and GeneratedSub.pas both excluded)');
       FoundGeneratedSub := False;
       for var I := 0 to Arr.Count - 1 do
         if SameText(ExtractFileName(Arr.Items[I].Value), 'GeneratedSub.pas') then
@@ -493,7 +499,7 @@ begin
       Assert.IsTrue(ListResult is TJSONArray, 'list_files should return array');
       Arr := TJSONArray(ListResult);
       // D*.pas matches Dog.pas → excluded from file index
-      Assert.AreEqual(8, Arr.Count, 'Should have 8 files (Dog.pas excluded via wildcard)');
+      Assert.AreEqual(10, Arr.Count, 'Should have 10 files (Dog.pas excluded via wildcard)');
       FoundDog := False;
       for var I := 0 to Arr.Count - 1 do
         if SameText(Arr.Items[I].Value, 'Dog.pas') then

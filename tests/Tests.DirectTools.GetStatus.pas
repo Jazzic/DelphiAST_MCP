@@ -89,7 +89,7 @@ begin
       Assert.IsTrue(Result is TJSONObject, 'Result should be TJSONObject');
       Obj := TJSONObject(Result);
 
-      Assert.AreEqual(7, Obj.GetValue<integer>('total_files'), 'Total files should be 7');
+      Assert.AreEqual(9, Obj.GetValue<integer>('total_files'), 'Total files should be 9');
     finally
       Result.Free;
     end;

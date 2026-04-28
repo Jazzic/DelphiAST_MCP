@@ -7,8 +7,10 @@ uses
   AnimalRegistry,
   Shapes,
   TestForwardDecl,
+  CouplingDemo,
   Generated,
-  GeneratedSub;
+  GeneratedSub,
+  ProceduralUnit;
 
 begin
 end.
