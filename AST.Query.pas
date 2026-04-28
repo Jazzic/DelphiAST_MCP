@@ -1,9 +1,11 @@
-unit AST.Query;
+﻿unit AST.Query;
 
 interface
 
 uses
-  SysUtils, Classes, Generics.Collections,
+  System.SysUtils,
+  System.Classes,
+  System.Generics.Collections,
   System.JSON,
   DelphiAST.Classes, DelphiAST.Consts;
 
@@ -65,6 +67,22 @@ uses
       Relevance: Integer; // 0=exact, 1=prefix, 2=substring
     end;
 
+    TSymbolIndexEntry = record
+      UnitName: string;
+      FilePath: string;
+      Kind:     string;
+    end;
+
+    TCouplingUsage = record
+      Symbol:          string;
+      SourceUnit:      string;
+      SourceFile:      string;
+      Line:            Integer;
+      EnclosingType:   string;
+      EnclosingMethod: string;
+      Kind:            string;
+    end;
+
   { Locate a symbol (method or type) and return its line range }
   function LocateSymbol(Tree: TSyntaxNode; const SymbolName: string): TSymbolLocation;
 
@@ -94,10 +112,29 @@ uses
   function SearchSymbols(AllTrees: TArray<TPair<string, TSyntaxNode>>;
     const Pattern, Kind: string; MaxResults: Integer): TArray<TSymbolMatch>;
 
+  { Build a symbol index of types/routines exported from each unit's interface section.
+    Pass the list of unit names the target file imports to scope the index.
+    Key = lowercase symbol name. Returns caller-owned dictionary. }
+  function BuildUnitSymbolIndex(
+    const ImportedUnitNames: TArray<string>;
+    AllTrees: TArray<TPair<string, TSyntaxNode>>
+  ): TDictionary<string, TSymbolIndexEntry>;
+
+  { Analyze cross-unit type coupling in a target unit.
+    Returns all usages of symbols declared in other units. }
+  function AnalyzeCoupling(
+    Tree:     TSyntaxNode;
+    AllTrees: TArray<TPair<string, TSyntaxNode>>
+  ): TArray<TCouplingUsage>;
+
+  { Tightness weight for a coupling kind; higher = harder to remove }
+  function KindWeight(const Kind: string): Integer;
+
 implementation
 
 uses
-  StrUtils, Math;
+  System.StrUtils,
+  System.Math;
 
 { ----- helpers ----- }
 
@@ -2345,6 +2382,304 @@ begin
   finally
     AllDecls.Free;
     Results.Free;
+  end;
+end;
+
+{ ----- GetDeclarationTypeName (private helper) ----- }
+
+function GetDeclarationTypeName(DeclNode: TSyntaxNode): string;
+var
+  TypeNode, Child: TSyntaxNode;
+begin
+  Result := '';
+  TypeNode := DeclNode.FindNode(ntType);
+  if TypeNode = nil then
+    Exit;
+  Result := NodeName(TypeNode);
+  if Result = '' then
+    for Child in TypeNode.ChildNodes do
+      if (Child.Typ = ntType) and (NodeName(Child) <> '') then
+      begin
+        Result := NodeName(Child);
+        Exit;
+      end;
+end;
+
+{ ----- BuildUnitSymbolIndex ----- }
+
+function BuildUnitSymbolIndex(
+  const ImportedUnitNames: TArray<string>;
+  AllTrees: TArray<TPair<string, TSyntaxNode>>
+): TDictionary<string, TSymbolIndexEntry>;
+var
+  Pair: TPair<string, TSyntaxNode>;
+  BareUnitName, ImportedName, SymName: string;
+  IsImported: Boolean;
+  IntfNode, Child, TypeDecl, TypeNode: TSyntaxNode;
+  TypeDecls: TList<TSyntaxNode>;
+  Entry: TSymbolIndexEntry;
+begin
+  Result := TDictionary<string, TSymbolIndexEntry>.Create;
+  TypeDecls := TList<TSyntaxNode>.Create;
+  try
+    for Pair in AllTrees do
+    begin
+      BareUnitName := ChangeFileExt(ExtractFileName(Pair.Key), '');
+
+      IsImported := False;
+      for ImportedName in ImportedUnitNames do
+        if SameText(BareUnitName, ImportedName) then
+        begin
+          IsImported := True;
+          Break;
+        end;
+      if not IsImported then
+        Continue;
+
+      IntfNode := Pair.Value.FindNode(ntInterface);
+      if IntfNode = nil then
+        Continue;
+
+      Entry.UnitName := ImportedName;
+      Entry.FilePath := Pair.Key;
+
+      TypeDecls.Clear;
+      CollectNodes(IntfNode, ntTypeDecl, TypeDecls);
+      for TypeDecl in TypeDecls do
+      begin
+        SymName := NodeName(TypeDecl);
+        if SymName = '' then
+          Continue;
+        TypeNode := TypeDecl.FindNode(ntType);
+        if TypeNode <> nil then
+          Entry.Kind := ExtractTypeKind(TypeNode)
+        else
+          Entry.Kind := 'type';
+        Result.AddOrSetValue(LowerCase(SymName), Entry);
+      end;
+
+      for Child in IntfNode.ChildNodes do
+        if (Child.Typ = ntMethod) and (NodeName(Child) <> '') then
+        begin
+          Entry.Kind := NodeKind(Child);
+          if Entry.Kind = '' then
+            Entry.Kind := 'function';
+          Result.AddOrSetValue(LowerCase(NodeName(Child)), Entry);
+        end;
+    end;
+  finally
+    TypeDecls.Free;
+  end;
+end;
+
+{ ----- KindWeight ----- }
+
+function KindWeight(const Kind: string): Integer;
+begin
+  if      SameText(Kind, 'inheritance')    then Result := 5
+  else if SameText(Kind, 'field_type')     then Result := 4
+  else if SameText(Kind, 'param_type')     then Result := 3
+  else if SameText(Kind, 'return_type')    then Result := 3
+  else if SameText(Kind, 'local_var')      then Result := 2
+  else if SameText(Kind, 'qualified_call') then Result := 2
+  else                                          Result := 1; // typecast, cast, unknown
+end;
+
+{ ----- AnalyzeCoupling ----- }
+
+function AnalyzeCoupling(
+  Tree:     TSyntaxNode;
+  AllTrees: TArray<TPair<string, TSyntaxNode>>
+): TArray<TCouplingUsage>;
+var
+  ImportedUnits: TArray<string>;
+  OwnTypes:  TDictionary<string, Boolean>;
+  SymIndex:  TDictionary<string, TSymbolIndexEntry>;
+  Results:   TList<TCouplingUsage>;
+  IntfNode, TypeDecl: TSyntaxNode;
+  TypeDecls: TList<TSyntaxNode>;
+  Entry:     TSymbolIndexEntry;
+
+  procedure AddUsage(const SymName, EncType, EncMethod, AKind: string; Line: Integer);
+  var
+    Usage: TCouplingUsage;
+    LName: string;
+  begin
+    LName := LowerCase(SymName);
+    if LName = '' then Exit;
+    if OwnTypes.ContainsKey(LName) then Exit;
+    if not SymIndex.TryGetValue(LName, Entry) then Exit;
+    Usage.Symbol          := SymName;
+    Usage.SourceUnit      := Entry.UnitName;
+    Usage.SourceFile      := Entry.FilePath;
+    Usage.Line            := Line;
+    Usage.EnclosingType   := EncType;
+    Usage.EnclosingMethod := EncMethod;
+    Usage.Kind            := AKind;
+    Results.Add(Usage);
+  end;
+
+  function IsTypeKind(const Kind: string): Boolean;
+  begin
+    Result := SameText(Kind, 'class')     or SameText(Kind, 'interface') or
+              SameText(Kind, 'record')    or SameText(Kind, 'type')      or
+              SameText(Kind, 'enum')      or SameText(Kind, 'object');
+  end;
+
+  procedure WalkForCoupling(Node: TSyntaxNode; const EncType, EncMethod: string);
+  var
+    Child: TSyntaxNode;
+    NewEncType, NewEncMethod, TypeName, CallExpr, Qualifier: string;
+    AncNames: TArray<string>;
+    AncName: string;
+    ParamsNode, ParamNode, RetNode: TSyntaxNode;
+    DotPos: Integer;
+  begin
+    if Node = nil then Exit;
+    NewEncType   := EncType;
+    NewEncMethod := EncMethod;
+
+    case Node.Typ of
+      ntTypeDecl:
+        begin
+          NewEncType := NodeName(Node);
+          if not IsForwardDecl(Node) then
+          begin
+            AncNames := ExtractAncestorNames(Tree, NewEncType);
+            for AncName in AncNames do
+              AddUsage(AncName, NewEncType, '', 'inheritance', Node.Line);
+          end;
+        end;
+
+      ntField:
+        begin
+          TypeName := GetDeclarationTypeName(Node);
+          AddUsage(TypeName, NewEncType, NewEncMethod, 'field_type', Node.Line);
+        end;
+
+      ntProperty:
+        begin
+          TypeName := GetDeclarationTypeName(Node);
+          AddUsage(TypeName, NewEncType, NewEncMethod, 'field_type', Node.Line);
+        end;
+
+      ntMethod:
+        begin
+          TypeName := NodeName(Node);
+          NewEncMethod := TypeName;
+
+          ParamsNode := Node.FindNode(ntParameters);
+          if ParamsNode <> nil then
+            for ParamNode in ParamsNode.ChildNodes do
+              if ParamNode.Typ = ntParameter then
+              begin
+                TypeName := GetDeclarationTypeName(ParamNode);
+                AddUsage(TypeName, NewEncType, NewEncMethod, 'param_type', ParamNode.Line);
+              end;
+
+          RetNode := Node.FindNode(ntReturnType);
+          if RetNode <> nil then
+          begin
+            TypeName := NodeName(RetNode);
+            if TypeName = '' then
+            begin
+              var TypeChild := RetNode.FindNode(ntType);
+              if TypeChild <> nil then
+                TypeName := NodeName(TypeChild);
+            end;
+            if TypeName = '' then
+            begin
+              var IdChild := RetNode.FindNode(ntIdentifier);
+              if IdChild <> nil then
+                TypeName := NodeName(IdChild);
+            end;
+            AddUsage(TypeName, NewEncType, NewEncMethod, 'return_type', RetNode.Line);
+          end;
+        end;
+
+      ntVariable:
+        begin
+          TypeName := GetDeclarationTypeName(Node);
+          AddUsage(TypeName, NewEncType, NewEncMethod, 'local_var', Node.Line);
+        end;
+
+      ntCall:
+        begin
+          if Length(Node.ChildNodes) > 0 then
+          begin
+            try
+              CallExpr := ExprToSource(Node.ChildNodes[0]);
+            except
+              CallExpr := '';
+            end;
+            if CallExpr <> '' then
+            begin
+              DotPos := Pos('.', CallExpr);
+              if DotPos > 1 then
+              begin
+                Qualifier := Copy(CallExpr, 1, DotPos - 1);
+                AddUsage(Qualifier, NewEncType, NewEncMethod, 'qualified_call', Node.Line);
+              end
+              else if SymIndex.ContainsKey(LowerCase(CallExpr)) then
+              begin
+                var E := SymIndex[LowerCase(CallExpr)];
+                if IsTypeKind(E.Kind) then
+                  AddUsage(CallExpr, NewEncType, NewEncMethod, 'cast', Node.Line)
+                else
+                  AddUsage(CallExpr, NewEncType, NewEncMethod, 'qualified_call', Node.Line);
+              end;
+            end;
+          end;
+        end;
+
+      ntAs, ntIs:
+        begin
+          if Length(Node.ChildNodes) >= 2 then
+          begin
+            try
+              TypeName := ExprToSource(Node.ChildNodes[1]);
+            except
+              TypeName := '';
+            end;
+            AddUsage(TypeName, NewEncType, NewEncMethod, 'typecast', Node.Line);
+          end;
+        end;
+    end;
+
+    for Child in Node.ChildNodes do
+      WalkForCoupling(Child, NewEncType, NewEncMethod);
+  end;
+
+begin
+  ImportedUnits := ExtractUnitNames(Tree);
+
+  OwnTypes  := TDictionary<string, Boolean>.Create;
+  TypeDecls := TList<TSyntaxNode>.Create;
+  try
+    IntfNode := Tree.FindNode(ntInterface);
+    if IntfNode <> nil then
+    begin
+      CollectNodes(IntfNode, ntTypeDecl, TypeDecls);
+      for TypeDecl in TypeDecls do
+        if NodeName(TypeDecl) <> '' then
+          OwnTypes.AddOrSetValue(LowerCase(NodeName(TypeDecl)), True);
+    end;
+
+    SymIndex := BuildUnitSymbolIndex(ImportedUnits, AllTrees);
+    try
+      Results := TList<TCouplingUsage>.Create;
+      try
+        WalkForCoupling(Tree, '', '');
+        Result := Results.ToArray;
+      finally
+        Results.Free;
+      end;
+    finally
+      SymIndex.Free;
+    end;
+  finally
+    TypeDecls.Free;
+    OwnTypes.Free;
   end;
 end;
 

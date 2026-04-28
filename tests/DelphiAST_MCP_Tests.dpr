@@ -49,6 +49,8 @@ uses
   Tests.DirectTools.FindDescendants in 'Tests.DirectTools.FindDescendants.pas',
   Tests.DirectTools.SearchSymbols in 'Tests.DirectTools.SearchSymbols.pas',
   Tests.DirectTools.ForwardDecl in 'Tests.DirectTools.ForwardDecl.pas',
+  Tests.DirectTools.AnalyzeCoupling in 'Tests.DirectTools.AnalyzeCoupling.pas',
+  Tests.DirectTools.FindWeakCouplings in 'Tests.DirectTools.FindWeakCouplings.pas',
   AST.Parser in '..\AST.Parser.pas',
   MCP.Tools in '..\MCP.Tools.pas',
   AST.Watcher in '..\AST.Watcher.pas',

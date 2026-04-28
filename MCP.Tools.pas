@@ -1,4 +1,4 @@
-unit MCP.Tools;
+﻿unit MCP.Tools;
 
 interface
 
@@ -32,6 +32,8 @@ type
     function DoIsReady(Params: TJSONObject): TJSONValue;
     function DoFindDescendants(Params: TJSONObject): TJSONValue;
     function DoSearchSymbols(Params: TJSONObject): TJSONValue;
+    function DoAnalyzeCoupling(Params: TJSONObject): TJSONValue;
+    function DoFindWeakCouplings(Params: TJSONObject): TJSONValue;
 
     property Parser: TASTParser read FParser;
   end;
@@ -39,7 +41,11 @@ type
 implementation
 
 uses
-  SysUtils, Classes, IOUtils, Generics.Collections, DelphiAST.Classes, DelphiAST.Consts, AST.Query;
+  System.SysUtils,
+  System.Classes,
+  System.IOUtils,
+  System.Math,
+  Generics.Collections, DelphiAST.Classes, DelphiAST.Consts, AST.Query;
 
 { TMCPTools }
 
@@ -245,6 +251,40 @@ begin
     'Search for symbols by name across all parsed files. ' +
     'Supports substring matching with relevance ranking (exact > prefix > substring).',
     MakeInputSchema(Props, ['pattern'])));
+
+  // 18. analyze_coupling
+  Props := TJSONObject.Create;
+  Props.AddPair('file', MakeStringProp('Path to the Delphi unit file to analyze for coupling'));
+  Result.Add(MakeTool('analyze_coupling',
+    'Analyze a unit for coupling to types declared in other units. ' +
+    'Returns each cross-unit symbol usage with source unit, line, enclosing type/method, and kind ' +
+    '(inheritance, field_type, param_type, return_type, local_var, typecast, qualified_call, cast). ' +
+    'cast = hard type coercion TDog(x); typecast = as/is operators. ' +
+    'Also returns a by_unit summary with per-unit symbol counts.',
+    MakeInputSchema(Props, ['file'])));
+
+  // 19. find_weak_couplings
+  Props := TJSONObject.Create;
+  Props.AddPair('filter',        MakeStringProp(
+    'Substring filter on file name (case-insensitive). ' +
+    'Only units whose file name contains this string are iterated. ' +
+    'Leave empty to iterate all parsed units.'));
+  Props.AddPair('limit',         MakeIntProp('Max weak dependencies to show per unit (default 5).', 5));
+  Props.AddPair('exclude_kinds', MakeStringProp(
+    'Comma-separated coupling kinds to exclude from scoring ' +
+    '(inheritance, field_type, param_type, return_type, local_var, ' +
+    'qualified_call, typecast, cast). ' +
+    'Excluded kinds are ignored when computing tightness scores; ' +
+    'a dependency with only excluded usages is omitted entirely.'));
+  Result.Add(MakeTool('find_weak_couplings',
+    'For each parsed unit (optionally filtered by file name), list the N dependency ' +
+    'units with the weakest (easiest-to-break) coupling. ' +
+    'Tightness = max kind-weight of non-excluded usages to that dependency unit. ' +
+    'Tie-break: fewer usages = weaker. ' +
+    'Coupling kinds by weight (5=hardest): ' +
+    'inheritance(5), field_type(4), param_type(3), return_type(3), ' +
+    'local_var(2), qualified_call(2), typecast(1), cast(1).',
+    MakeInputSchema(Props, [])));
 end;
 
 function TMCPTools.CallTool(const ToolName: string; Params: TJSONObject): TJSONValue;
@@ -304,6 +344,10 @@ begin
       Result := DoFindDescendants(Params)
     else if ToolName = 'search_symbols' then
       Result := DoSearchSymbols(Params)
+    else if ToolName = 'analyze_coupling' then
+      Result := DoAnalyzeCoupling(Params)
+    else if ToolName = 'find_weak_couplings' then
+      Result := DoFindWeakCouplings(Params)
     else
     begin
       Result := TJSONObject.Create;
@@ -1578,6 +1622,294 @@ begin
   end;
 
   Result := Arr;
+end;
+
+function TMCPTools.DoAnalyzeCoupling(Params: TJSONObject): TJSONValue;
+var
+  FileName, UnitName, LKey, SymName: string;
+  Tree: TSyntaxNode;
+  AllTrees: TArray<TPair<string, TSyntaxNode>>;
+  Usages: TArray<TCouplingUsage>;
+  Usage: TCouplingUsage;
+  UsagesArr: TJSONArray;
+  UsageObj: TJSONObject;
+  ByUnit, UnitEntry: TJSONObject;
+  SymbolsArr: TJSONArray;
+  SymList: TStringList;
+  UnitCountMap: TDictionary<string, Integer>;
+  UnitSymbolsMap: TDictionary<string, TStringList>;
+  UnitDisplayNames: TDictionary<string, string>;
+  ResultObj: TJSONObject;
+  Err: TJSONObject;
+  I: Integer;
+begin
+  FileName := GetStr(Params, 'file');
+  if FileName = '' then
+  begin
+    Err := TJSONObject.Create;
+    Err.AddPair('error', 'Parameter "file" is required');
+    Exit(Err);
+  end;
+
+  Tree := FParser.ParseFile(FileName);
+  if Tree = nil then
+  begin
+    Err := TJSONObject.Create;
+    Err.AddPair('error', 'Could not parse file: ' + FileName);
+    Exit(Err);
+  end;
+
+  AllTrees := FParser.GetAllTrees;
+  Usages := AnalyzeCoupling(Tree, AllTrees);
+
+  UsagesArr := TJSONArray.Create;
+
+  UnitCountMap    := TDictionary<string, Integer>.Create;
+  UnitSymbolsMap  := TDictionary<string, TStringList>.Create;
+  UnitDisplayNames := TDictionary<string, string>.Create;
+  try
+    for Usage in Usages do
+    begin
+      UsageObj := TJSONObject.Create;
+      UsageObj.AddPair('symbol',           Usage.Symbol);
+      UsageObj.AddPair('source_unit',      Usage.SourceUnit);
+      UsageObj.AddPair('source_file',      Usage.SourceFile);
+      UsageObj.AddPair('line',             TJSONNumber.Create(Usage.Line));
+      UsageObj.AddPair('enclosing_type',   Usage.EnclosingType);
+      UsageObj.AddPair('enclosing_method', Usage.EnclosingMethod);
+      UsageObj.AddPair('kind',             Usage.Kind);
+      UsagesArr.Add(UsageObj);
+
+      LKey := LowerCase(Usage.SourceUnit);
+
+      if not UnitDisplayNames.ContainsKey(LKey) then
+        UnitDisplayNames.Add(LKey, Usage.SourceUnit);
+
+      if UnitCountMap.ContainsKey(LKey) then
+        UnitCountMap[LKey] := UnitCountMap[LKey] + 1
+      else
+        UnitCountMap.Add(LKey, 1);
+
+      if not UnitSymbolsMap.ContainsKey(LKey) then
+        UnitSymbolsMap.Add(LKey, TStringList.Create);
+      if UnitSymbolsMap[LKey].IndexOf(Usage.Symbol) < 0 then
+        UnitSymbolsMap[LKey].Add(Usage.Symbol);
+    end;
+
+    ByUnit := TJSONObject.Create;
+    for var Pair in UnitCountMap do
+    begin
+      LKey := Pair.Key;
+      UnitEntry := TJSONObject.Create;
+      UnitEntry.AddPair('count', TJSONNumber.Create(Pair.Value));
+      SymbolsArr := TJSONArray.Create;
+      if UnitSymbolsMap.TryGetValue(LKey, SymList) then
+        for I := 0 to SymList.Count - 1 do
+          SymbolsArr.Add(SymList[I]);
+      UnitEntry.AddPair('symbols', SymbolsArr);
+      ByUnit.AddPair(UnitDisplayNames[LKey], UnitEntry);
+    end;
+
+    UnitName := ChangeFileExt(ExtractFileName(FileName), '');
+
+    ResultObj := TJSONObject.Create;
+    ResultObj.AddPair('file',         FileName);
+    ResultObj.AddPair('unit_name',    UnitName);
+    ResultObj.AddPair('usages',       UsagesArr);
+    ResultObj.AddPair('by_unit',      ByUnit);
+    ResultObj.AddPair('total_usages', TJSONNumber.Create(Length(Usages)));
+    Result := ResultObj;
+  finally
+    for SymName in UnitSymbolsMap.Keys do
+      UnitSymbolsMap[SymName].Free;
+    UnitCountMap.Free;
+    UnitSymbolsMap.Free;
+    UnitDisplayNames.Free;
+  end;
+end;
+
+function TMCPTools.DoFindWeakCouplings(Params: TJSONObject): TJSONValue;
+type
+  TDepEntry = record
+    LKey:      string;
+    Tightness: Integer;
+    Count:     Integer;
+  end;
+var
+  Filter, ExcludeStr, ExcPart, LKey, Kind, UnitName: string;
+  ExcludeParts: TArray<string>;
+  ExcludeSet: TDictionary<string, Boolean>;
+  AllTrees: TArray<TPair<string, TSyntaxNode>>;
+  Pair: TPair<string, TSyntaxNode>;
+  Usages: TArray<TCouplingUsage>;
+  Usage: TCouplingUsage;
+  Limit, N, I, J, W: Integer;
+  DepTightness: TDictionary<string, Integer>;
+  DepCount: TDictionary<string, Integer>;
+  DepHardest: TDictionary<string, string>;
+  DepDisplayName: TDictionary<string, string>;
+  DepFilePath: TDictionary<string, string>;
+  DepKinds: TDictionary<string, TDictionary<string, Boolean>>;
+  KindMap: TDictionary<string, Boolean>;
+  Entries: TArray<TDepEntry>;
+  Temp: TDepEntry;
+  Entry: TDepEntry;
+  UnitsArr, WeakDepsArr, KindsArr, ExcludedArr: TJSONArray;
+  UnitObj, DepObj, ResultObj: TJSONObject;
+begin
+  Filter      := GetStr(Params, 'filter');
+  Limit       := GetInt(Params, 'limit', 5);
+  if Limit <= 0 then Limit := 5;
+  ExcludeStr  := GetStr(Params, 'exclude_kinds');
+
+  ExcludeSet := TDictionary<string, Boolean>.Create;
+  try
+    if ExcludeStr <> '' then
+    begin
+      ExcludeParts := ExcludeStr.Split([',']);
+      for ExcPart in ExcludeParts do
+      begin
+        var Trimmed := Trim(ExcPart);
+        if Trimmed <> '' then
+          ExcludeSet.AddOrSetValue(LowerCase(Trimmed), True);
+      end;
+    end;
+
+    AllTrees  := FParser.GetAllTrees;
+    UnitsArr  := TJSONArray.Create;
+
+    for Pair in AllTrees do
+    begin
+      if (Filter <> '') and
+         (Pos(LowerCase(Filter), LowerCase(ExtractFileName(Pair.Key))) = 0) then
+        Continue;
+
+      Usages := AnalyzeCoupling(Pair.Value, AllTrees);
+
+      DepTightness   := TDictionary<string, Integer>.Create;
+      DepCount       := TDictionary<string, Integer>.Create;
+      DepHardest     := TDictionary<string, string>.Create;
+      DepDisplayName := TDictionary<string, string>.Create;
+      DepFilePath    := TDictionary<string, string>.Create;
+      DepKinds       := TDictionary<string, TDictionary<string, Boolean>>.Create;
+      try
+        for Usage in Usages do
+        begin
+          if ExcludeSet.ContainsKey(LowerCase(Usage.Kind)) then
+            Continue;
+
+          LKey := LowerCase(Usage.SourceUnit);
+
+          if not DepDisplayName.ContainsKey(LKey) then
+          begin
+            DepDisplayName.Add(LKey, Usage.SourceUnit);
+            DepFilePath.Add(LKey, Usage.SourceFile);
+          end;
+
+          W := KindWeight(Usage.Kind);
+          if DepTightness.ContainsKey(LKey) then
+          begin
+            if W > DepTightness[LKey] then
+            begin
+              DepTightness[LKey] := W;
+              DepHardest[LKey]   := Usage.Kind;
+            end;
+          end
+          else
+          begin
+            DepTightness.Add(LKey, W);
+            DepHardest.Add(LKey, Usage.Kind);
+          end;
+
+          if DepCount.ContainsKey(LKey) then
+            DepCount[LKey] := DepCount[LKey] + 1
+          else
+            DepCount.Add(LKey, 1);
+
+          if not DepKinds.ContainsKey(LKey) then
+            DepKinds.Add(LKey, TDictionary<string, Boolean>.Create);
+          DepKinds[LKey].AddOrSetValue(LowerCase(Usage.Kind), True);
+        end;
+
+        // Build sorted entries array
+        N := DepTightness.Count;
+        SetLength(Entries, N);
+        I := 0;
+        for LKey in DepTightness.Keys do
+        begin
+          Entries[I].LKey      := LKey;
+          Entries[I].Tightness := DepTightness[LKey];
+          Entries[I].Count     := DepCount[LKey];
+          Inc(I);
+        end;
+
+        // Insertion sort: ascending tightness, then ascending count
+        for I := 1 to N - 1 do
+        begin
+          Temp := Entries[I];
+          J    := I - 1;
+          while (J >= 0) and
+                ((Entries[J].Tightness > Temp.Tightness) or
+                 ((Entries[J].Tightness = Temp.Tightness) and
+                  (Entries[J].Count > Temp.Count))) do
+          begin
+            Entries[J + 1] := Entries[J];
+            Dec(J);
+          end;
+          Entries[J + 1] := Temp;
+        end;
+
+        UnitName    := ChangeFileExt(ExtractFileName(Pair.Key), '');
+        UnitObj     := TJSONObject.Create;
+        WeakDepsArr := TJSONArray.Create;
+
+        for I := 0 to Min(Limit, N) - 1 do
+        begin
+          Entry  := Entries[I];
+          LKey   := Entry.LKey;
+          DepObj := TJSONObject.Create;
+          DepObj.AddPair('dependency_unit', DepDisplayName[LKey]);
+          DepObj.AddPair('dependency_file', DepFilePath[LKey]);
+          DepObj.AddPair('tightness',       TJSONNumber.Create(DepTightness[LKey]));
+          DepObj.AddPair('hardest_kind',    DepHardest[LKey]);
+          DepObj.AddPair('usage_count',     TJSONNumber.Create(DepCount[LKey]));
+          KindsArr := TJSONArray.Create;
+          if DepKinds.TryGetValue(LKey, KindMap) then
+            for Kind in KindMap.Keys do
+              KindsArr.Add(Kind);
+          DepObj.AddPair('kinds', KindsArr);
+          WeakDepsArr.Add(DepObj);
+        end;
+
+        UnitObj.AddPair('unit',             UnitName);
+        UnitObj.AddPair('file',             Pair.Key);
+        UnitObj.AddPair('weak_dependencies', WeakDepsArr);
+        UnitsArr.Add(UnitObj);
+      finally
+        for KindMap in DepKinds.Values do
+          KindMap.Free;
+        DepKinds.Free;
+        DepTightness.Free;
+        DepCount.Free;
+        DepHardest.Free;
+        DepDisplayName.Free;
+        DepFilePath.Free;
+      end;
+    end;
+
+    ExcludedArr := TJSONArray.Create;
+    for LKey in ExcludeSet.Keys do
+      ExcludedArr.Add(LKey);
+
+    ResultObj := TJSONObject.Create;
+    ResultObj.AddPair('total_units_analyzed', TJSONNumber.Create(UnitsArr.Count));
+    ResultObj.AddPair('filter',               Filter);
+    ResultObj.AddPair('excluded_kinds',       ExcludedArr);
+    ResultObj.AddPair('units',                UnitsArr);
+    Result := ResultObj;
+  finally
+    ExcludeSet.Free;
+  end;
 end;
 
 end.
