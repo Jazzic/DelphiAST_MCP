@@ -1,9 +1,11 @@
-unit MCP.Server;
+﻿unit MCP.Server;
 
 interface
 
 uses
-  SysUtils, Classes, System.JSON, IdHTTPServer, IdContext, IdCustomHTTPServer,
+  System.SysUtils,
+  System.Classes,
+  System.JSON, IdHTTPServer, IdContext, IdCustomHTTPServer,
   MCP.Tools, AST.Parser;
 
 type

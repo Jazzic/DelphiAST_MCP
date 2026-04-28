@@ -3,7 +3,10 @@ unit AST.Watcher;
 interface
 
 uses
-  SysUtils, Classes, Generics.Collections, Windows;
+  System.SysUtils,
+  System.Classes,
+  System.Generics.Collections,
+  Winapi.Windows;
 
 type
   TDirectoryWatcher = class(TThread)

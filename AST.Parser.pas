@@ -3,7 +3,7 @@ unit AST.Parser;
 interface
 
 uses
-  SysUtils, Classes, Generics.Collections, IOUtils, System.SyncObjs,
+  System.SysUtils, System.Classes, System.Generics.Collections, System.IOUtils, System.SyncObjs,
   DelphiAST, DelphiAST.Classes, DelphiAST.Consts,
   SimpleParser.Lexer.Types;
 

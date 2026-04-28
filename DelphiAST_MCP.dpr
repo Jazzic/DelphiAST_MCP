@@ -4,9 +4,9 @@ program DelphiAST_MCP;
 
 
 uses
-  SysUtils,
-  Classes,
-  IOUtils,
+  System.SysUtils,
+  System.Classes,
+  System.IOUtils,
   AST.Parser in 'AST.Parser.pas',
   AST.Serialize in 'AST.Serialize.pas',
   AST.Watcher in 'AST.Watcher.pas',

@@ -3,7 +3,9 @@ unit AST.Serialize;
 interface
 
 uses
-  SysUtils, Classes, Generics.Collections,
+  System.SysUtils,
+  System.Classes,
+  System.Generics.Collections,
   DelphiAST.Consts, DelphiAST.Classes;
 
 type

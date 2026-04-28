@@ -109,7 +109,16 @@
       "Bash(cd \"C:/Users/jespe/Documents/Embarcadero/Studio/Projects/DelphiAST_MCP\" && cmd.exe /c run-tests.bat 2>&1)",
       "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\jespe\\\\Documents\\\\Embarcadero\\\\Studio\\\\Projects\\\\DelphiAST_MCP && build-tests.bat\" 2>&1; echo \"Exit: $?\")",
       "Bash(c:\\\\Users\\\\jespe\\\\Documents\\\\Embarcadero\\\\Studio\\\\Projects\\\\DelphiAST_MCP\\\\build-tests.bat)",
-      "Bash(find C:UsersjespeDocumentsEmbarcaderoStudioProjectsDelphiAST_MCP -type f -name *.delphi-ast.json)"
+      "Bash(find C:UsersjespeDocumentsEmbarcaderoStudioProjectsDelphiAST_MCP -type f -name *.delphi-ast.json)",
+      "Bash(sort -k5 -rn)",
+      "Bash(c:/Users/jespe/Documents/Embarcadero/Studio/Projects/DelphiAST_MCP/build-tests.bat *)",
+      "Bash(c:/Users/jespe/Documents/Embarcadero/Studio/Projects/DelphiAST_MCP/run-tests.bat *)",
+      "Bash(\"c:/Users/jespe/Documents/Embarcadero/Studio/Projects/DelphiAST_MCP/build-tests.bat\")",
+      "Bash(\"c:/Users/jespe/Documents/Embarcadero/Studio/Projects/DelphiAST_MCP/run-tests.bat\")",
+      "Bash(c:/Users/jespe/Documents/Embarcadero/Studio/Projects/DelphiAST_MCP/build.bat *)",
+      "Bash(git stash *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   },
   "enabledMcpjsonServers": [
